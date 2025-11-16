@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <!-- Nadpis -->
+    <TextView
+        android:id="@+id/tvMapTypeTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Vyber typ mapy"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:paddingBottom="16dp" />
+
+    <!-- Normálna -->
+    <Button
+        android:id="@+id/btnMapNormal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Normálna"
+        android:paddingVertical="8dp" />
+
+    <!-- Satelitná -->
+    <Button
+        android:id="@+id/btnMapSatellite"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Satelitná"
+        android:paddingVertical="8dp"
+        android:layout_marginTop="8dp" />
+
+    <!-- Hybridná -->
+    <Button
+        android:id="@+id/btnMapHybrid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Hybridná"
+        android:paddingVertical="8dp"
+        android:layout_marginTop="8dp" />
+
+    <!-- Terén -->
+    <Button
+        android:id="@+id/btnMapTerrain"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Terén"
+        android:paddingVertical="8dp"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>
+
