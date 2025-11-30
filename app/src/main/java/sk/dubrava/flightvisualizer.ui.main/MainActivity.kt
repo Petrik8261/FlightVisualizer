@@ -18,14 +18,11 @@ import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import io.github.sceneview.SceneView
-import io.github.sceneview.math.Position
-import io.github.sceneview.math.Rotation
-import io.github.sceneview.math.Scale
-import io.github.sceneview.node.ModelNode
 import sk.dubrava.flightvisualizer.R
-import sk.tvojemeno.flightvisualizer.data.model.FlightPoint
-import sk.dubrava.flightvisualizer.data.model.FlightType
+import sk.dubrava.flightvisualizer.data.model.FlightPoint   // uprav ak máš iný balík
+import android.widget.TextView
+import kotlin.math.roundToInt
+import java.util.Locale
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -42,24 +39,27 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var btnPause: Button
     private lateinit var btnStop: Button
     private lateinit var btnSpeed: Button
+    private lateinit var tvAltitude: TextView
+    private lateinit var tvSpeed: TextView
+    private lateinit var tvPitchRoll: TextView
+
+
 
     private var isPlaying = false
     private var currentIndex = 0
     private val playHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var playbackSpeed = 1.0 // 1x rýchlosť
+    private var lastSpeedKmh = 0.0
+    private var lastRoll = 0.0
+    private var lastPitch = 0.0
+    private var lastYaw = 0.0
+
 
     // Marker, ktorý sa hýbe po trase
     private var flightMarker: com.google.android.gms.maps.model.Marker? = null
 
-    // --- 3D SceneView ---
-    private lateinit var droneView: SceneView
-    private var droneNode: ModelNode? = null
-
-    // typ letu – zatiaľ nastavíme DRONE
-    private var flightType: FlightType = FlightType.DRONE
-
     // -------------------------------------------------------------------------
-    //  onCreate – inicializácia UI, SceneView, mapy
+    //  onCreate – inicializácia UI, mapy
     // -------------------------------------------------------------------------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,12 +74,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         btnStop = findViewById(R.id.btnStop)
         btnSpeed = findViewById(R.id.btnSpeed)
 
-        droneView = findViewById(R.id.droneView)
+        // Textové polia pre zobrazenie údajov
+        tvAltitude = findViewById(R.id.tvAltitude)
+        tvSpeed = findViewById(R.id.tvSpeed)
+        tvPitchRoll = findViewById(R.id.tvPitchRoll)
 
-        // 2) Inicializácia 3D scény a načítanie modelu
-        setup3DScene()
 
-        // 3) Playback tlačidlá
+        // 2) Playback tlačidlá
         btnPlay.setOnClickListener { startPlayback() }
 
         btnPause.setOnClickListener {
@@ -102,18 +103,18 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             cyclePlaybackSpeed()
         }
 
-        // 4) Tlačidlo na zmenu typu mapy (normal/sat/hybrid/terrain)
+        // 3) Tlačidlo na zmenu typu mapy (normal/sat/hybrid/terrain)
         val mapTypeButton = findViewById<FloatingActionButton>(R.id.btnMapType)
         mapTypeButton.setOnClickListener {
             showMapTypeBottomSheet()
         }
 
-        // 5) Google Play Services kontrola
+        // 4) Google Play Services kontrola
         if (!checkGooglePlayServices()) {
             return
         }
 
-        // 6) MapFragment
+        // 5) MapFragment
         val mapFragment = supportFragmentManager
             .findFragmentById(R.id.mapFragment) as? SupportMapFragment
 
@@ -172,6 +173,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 flightMarker?.position = point
                 googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
 
+                // aktualizuj údaje podľa flightPoints[currentIndex]
+                updateUiForIndex(currentIndex)
+
+
                 // TODO: aktualizuj texty (výška, rýchlosť...) podľa flightPoints[progress]
             }
 
@@ -210,6 +215,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         // kamera na začiatok
         googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(startPoint, 15f))
+
+        // inicializuj panel údajov na prvý bod
+        updateUiForIndex(0)
     }
 
     // -------------------------------------------------------------------------
@@ -304,6 +312,72 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         Log.i(TAG, "Trasa pred čistením: ${rawPoints.size} bodov, po čistení: ${cleaned.size}")
         return cleaned
     }
+    // -------------------------------------------------------------------------
+    //  Aktualizácia panelu s údajmi pre daný index
+    // -------------------------------------------------------------------------
+    private fun updateUiForIndex(index: Int) {
+        if (index < 0 || index >= flightPoints.size) return
+
+        val fp = flightPoints[index]
+
+        // Výška
+        tvAltitude.text = "Výška: ${fp.altitude.toInt()} m"
+
+        // Rýchlosť – spočítame z dvoch po sebe idúcich bodov (približne)
+        var speedKmh = 0.0
+        if (index > 0) {
+            val prev = flightPoints[index - 1]
+
+            val prevLatLng = LatLng(prev.latitude, prev.longitude)
+            val curLatLng = LatLng(fp.latitude, fp.longitude)
+
+            val distMeters = distanceMeters(prevLatLng, curLatLng)
+
+            val tPrev = parseTimeToSeconds(prev.time)
+            val tCur = parseTimeToSeconds(fp.time)
+            val dt = (tCur - tPrev).coerceAtLeast(1) // nech nie je 0
+
+            val speedMs = distMeters / dt.toDouble()
+            speedKmh = speedMs * 3.6
+        }
+
+        // ak je rýchlosť prakticky 0, necháme poslednú nenulovú
+        if (speedKmh > 0.1) {
+            lastSpeedKmh = speedKmh
+        }
+        tvSpeed.text = "Rýchlosť: ${lastSpeedKmh.roundToInt()} km/h"
+
+        // roll/pitch/yaw – ak sú veľmi blízko 0, použijeme poslednú hodnotu
+        val roll = if (kotlin.math.abs(fp.x) < 0.1) lastRoll else fp.x
+        val pitch = if (kotlin.math.abs(fp.y) < 0.1) lastPitch else fp.y
+        val yaw = if (kotlin.math.abs(fp.z) < 0.1) lastYaw else fp.z
+
+        lastRoll = roll
+        lastPitch = pitch
+        lastYaw = yaw
+
+        tvPitchRoll.text = String.format(
+            java.util.Locale.ROOT,
+            "Náklon (roll): %.1f°, Klopenie (pitch): %.1f°, Yaw: %.1f°",
+            roll, pitch, yaw
+        )
+    }
+
+    // Jednoduchý parsing času z logu – očakáva HH:MM:SS, MM:SS alebo len sekundy
+    private fun parseTimeToSeconds(time: String): Int {
+        val parts = time.split(":")
+        return try {
+            when (parts.size) {
+                3 -> parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt()
+                2 -> parts[0].toInt() * 60 + parts[1].toInt()
+                else -> time.toIntOrNull() ?: 0
+            }
+        } catch (e: NumberFormatException) {
+            0
+        }
+    }
+
+
 
     // -------------------------------------------------------------------------
     //  Playback – spustenie / zastavenie / rýchlosť
@@ -338,28 +412,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             playbackSeekBar.progress = currentIndex
 
-            // --- ROTÁCIA 3D MODELU PODĽA DÁT ---
-            if (currentIndex < flightPoints.size) {
-                val fp = flightPoints[currentIndex]
+            // aktualizuj údaje pre aktuálny index
+            updateUiForIndex(currentIndex)
 
-                when (flightType) {
-                    FlightType.DRONE -> {
-                        droneNode?.rotation = Rotation(
-                            x = fp.y.toFloat(),        // pitch
-                            y = fp.z.toFloat(),        // yaw
-                            z = fp.x.toFloat()         // roll
-                        )
-                    }
-
-                    FlightType.AIRPLANE -> {
-                        droneNode?.rotation = Rotation(
-                            x = fp.y.toFloat() * 0.7f,
-                            y = fp.z.toFloat(),
-                            z = fp.x.toFloat() * 0.7f
-                        )
-                    }
-                }
-            }
 
             currentIndex++
 
@@ -461,56 +516,4 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             false
         }
     }
-
-    // -------------------------------------------------------------------------
-    //  3D SCÉNA – SceneView + model
-    // -------------------------------------------------------------------------
-    private fun setup3DScene() {
-
-        val modelFile = when (flightType) {
-            FlightType.DRONE -> "models/drone_lowpoly.glb"
-            FlightType.AIRPLANE -> "models/airplane_lowpoly.glb"
-        }
-
-        // ModelNode pre SceneView 0.9.0
-        droneNode = ModelNode(
-            position = Position(0f, 0f, -4f),
-            rotation = Rotation(0f, 0f, 0f),
-            scale = Scale(0.2f)   // BÝVA SPRÁVNE PRE GLB MODELY
-        )
-
-        droneView.apply {
-            cameraNode.position = Position(0f, 0f, 5f)
-            cameraNode.rotation = Rotation(0f, 0f, 0f)
-        }
-
-        droneNode?.position = Position(0f, -0.3f, 0f)
-
-
-
-        droneView.addChild(droneNode!!)
-
-        // 🔥 loadModelAsync pre SceneView 0.9.0
-        droneNode?.loadModelAsync(
-            context = this,
-            lifecycle = lifecycle,
-            glbFileLocation = modelFile,
-            onLoaded = {
-                Log.i(TAG, "✔️ 3D model načítaný")
-            },
-            onError = { exception ->
-                Log.e(TAG, "Chyba pri načítavaní modelu", exception)
-                Toast.makeText(
-                    this,
-                    "Chyba modelu: ${exception.message}",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        )
-    }
-
 }
-
-
-
-

@@ -1,4 +1,4 @@
-package sk.tvojemeno.flightvisualizer.data.model
+package sk.dubrava.flightvisualizer.data.model
 
 data class FlightPoint(
     val time: String,
@@ -11,4 +11,5 @@ data class FlightPoint(
     val y: Double,
     val z: Double
 )
+
 
