@@ -23,6 +23,8 @@ import sk.dubrava.flightvisualizer.data.model.FlightPoint   // uprav ak máš in
 import android.widget.TextView
 import kotlin.math.roundToInt
 import java.util.Locale
+import kotlin.math.*
+
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -32,6 +34,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private var flightPoints: List<FlightPoint> = emptyList()
     private var routeLatLng: List<LatLng> = emptyList()
+    private var hudUpdateCounter = 0
+
 
     // --- Playback ---
     private lateinit var playbackSeekBar: SeekBar
@@ -42,6 +46,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var tvAltitude: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvPitchRoll: TextView
+    private lateinit var tvVerticalSpeed: TextView
+    private lateinit var tvHeading: TextView
+    private lateinit var tvGForce: TextView
 
 
 
@@ -73,6 +80,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         btnPause = findViewById(R.id.btnPause)
         btnStop = findViewById(R.id.btnStop)
         btnSpeed = findViewById(R.id.btnSpeed)
+        tvAltitude = findViewById(R.id.tvAltitude)
+        tvSpeed = findViewById(R.id.tvSpeed)
+        tvPitchRoll = findViewById(R.id.tvPitchRoll)
+        tvVerticalSpeed = findViewById(R.id.tvVerticalSpeed)
+        tvHeading = findViewById(R.id.tvHeading)
+        tvGForce = findViewById(R.id.tvGForce)
+
 
         // Textové polia pre zobrazenie údajov
         tvAltitude = findViewById(R.id.tvAltitude)
@@ -291,6 +305,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return R * c
     }
 
+    // Výpočet kurzu/headingu medzi dvomi bodmi (0–360°)
+    private fun headingDegrees(from: LatLng, to: LatLng): Double {
+        val lat1 = Math.toRadians(from.latitude)
+        val lat2 = Math.toRadians(to.latitude)
+        val dLon = Math.toRadians(to.longitude - from.longitude)
+
+        val y = sin(dLon) * cos(lat2)
+        val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        var bearing = Math.toDegrees(atan2(y, x))
+        if (bearing < 0) bearing += 360.0
+        return bearing
+    }
+
+
     private fun cleanRoute(rawPoints: List<LatLng>, maxStepMeters: Double = 500.0): List<LatLng> {
         if (rawPoints.size < 2) return rawPoints
 
@@ -320,11 +348,14 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         val fp = flightPoints[index]
 
-        // Výška
-        tvAltitude.text = "Výška: ${fp.altitude.toInt()} m"
+        // ALT
+        tvAltitude.text = "ALT: ${fp.altitude.toInt()} m"
 
-        // Rýchlosť – spočítame z dvoch po sebe idúcich bodov (približne)
+        // --- Horizontal speed + vertical speed + heading ---
         var speedKmh = 0.0
+        var vsMs = 0.0
+        var heading = 0.0
+
         if (index > 0) {
             val prev = flightPoints[index - 1]
 
@@ -339,29 +370,57 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             val speedMs = distMeters / dt.toDouble()
             speedKmh = speedMs * 3.6
+
+            // vertikálna rýchlosť (m/s)
+            val dz = fp.altitude - prev.altitude
+            vsMs = dz / dt.toDouble()
+
+            // heading (0–360°)
+            heading = headingDegrees(prevLatLng, curLatLng)
         }
 
-        // ak je rýchlosť prakticky 0, necháme poslednú nenulovú
+        // Rýchlosť – knots + km/h, jednoduchý smoothing na 0
         if (speedKmh > 0.1) {
             lastSpeedKmh = speedKmh
         }
-        tvSpeed.text = "Rýchlosť: ${lastSpeedKmh.roundToInt()} km/h"
+        val speedKnots = lastSpeedKmh / 1.852
+        tvSpeed.text = "SPD: ${speedKnots.roundToInt()} kt (${lastSpeedKmh.roundToInt()} km/h)"
 
-        // roll/pitch/yaw – ak sú veľmi blízko 0, použijeme poslednú hodnotu
-        val roll = if (kotlin.math.abs(fp.x) < 0.1) lastRoll else fp.x
-        val pitch = if (kotlin.math.abs(fp.y) < 0.1) lastPitch else fp.y
-        val yaw = if (kotlin.math.abs(fp.z) < 0.1) lastYaw else fp.z
+        // Vertikálna rýchlosť v m/s a ft/min
+        val vsFpm = vsMs * 196.85
+        tvVerticalSpeed.text = String.format(
+            Locale.ROOT,
+            "VS: %.1f m/s (%.0f ft/min)",
+            vsMs,
+            vsFpm
+        )
 
-        lastRoll = roll
-        lastPitch = pitch
-        lastYaw = yaw
+        // Heading – ak nemáme vypočítaný (index 0), necháme 0°
+        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", heading)
+
+        // --- Attitude: roll/pitch/yaw so smoothingom ---
+        val rollSmoothed = smoothAngle(lastRoll, fp.x)
+        val pitchSmoothed = smoothAngle(lastPitch, fp.y)
+        val yawSmoothed = smoothAngle(lastYaw, fp.z)
+
+        lastRoll = rollSmoothed
+        lastPitch = pitchSmoothed
+        lastYaw = yawSmoothed
 
         tvPitchRoll.text = String.format(
-            java.util.Locale.ROOT,
-            "Náklon (roll): %.1f°, Klopenie (pitch): %.1f°, Yaw: %.1f°",
-            roll, pitch, yaw
+            Locale.ROOT,
+            "ROLL: %.1f° | PITCH: %.1f° | YAW: %.1f°",
+            rollSmoothed,
+            pitchSmoothed,
+            yawSmoothed
         )
+
+        // --- G-force (load factor) ako 1/cos(roll) – aproximácia pri malom pitch ---
+        val rollRad = Math.toRadians(rollSmoothed)
+        val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)   // ochrana pred delením 0
+        tvGForce.text = String.format(Locale.ROOT, "G: %.2f", loadFactor)
     }
+
 
     // Jednoduchý parsing času z logu – očakáva HH:MM:SS, MM:SS alebo len sekundy
     private fun parseTimeToSeconds(time: String): Int {
@@ -377,6 +436,18 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    // Zjemnenie zmien uhla – aby roll/pitch/yaw neskákali
+    private fun smoothAngle(prev: Double, next: Double): Double {
+        val diff = abs(prev - next)
+
+        return when {
+            diff < 0.5 -> (prev + next) / 2          // skoro rovnaké -> priemer
+            diff < 5.0 -> next * 0.7 + prev * 0.3    // menšia zmena -> zjemniť
+            else -> next                             // veľká zmena -> ber novú
+        }
+    }
+
+
 
 
     // -------------------------------------------------------------------------
@@ -388,9 +459,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         isPlaying = true
         currentIndex = playbackSeekBar.progress
-
+        hudUpdateCounter = 0    // reset
         playHandler.post(playStepRunnable)
     }
+
 
     private fun stopPlayback() {
         isPlaying = false
@@ -408,20 +480,23 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             val point = routeLatLng[currentIndex]
             flightMarker?.position = point
-            googleMap?.animateCamera(CameraUpdateFactory.newLatLng(point))
 
-            playbackSeekBar.progress = currentIndex
+            // HUD + kamera len každý 3. bod – menej zaťaženia, menej blikania
+            if (hudUpdateCounter % 3 == 0) {
+                googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
+                updateUiForIndex(currentIndex)
+                playbackSeekBar.progress = currentIndex
+            }
 
-            // aktualizuj údaje pre aktuálny index
-            updateUiForIndex(currentIndex)
-
-
+            hudUpdateCounter++
             currentIndex++
 
-            val baseDelay = 50L
-            val delay = (baseDelay / playbackSpeed).toLong().coerceAtLeast(5L)
+            // trochu väčší základný delay, aby bol pohyb čitateľný
+            val baseDelay = 80L
+            val delay = (baseDelay / playbackSpeed).toLong().coerceAtLeast(10L)
 
             playHandler.postDelayed(this, delay)
+
         }
     }
 

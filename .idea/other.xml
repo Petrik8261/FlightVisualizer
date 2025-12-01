@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="ScreenshotViewer">
+    <option name="frameScreenshot" value="true" />
+  </component>
   <component name="direct_access_persist.xml">
     <option name="deviceSelectionList">
       <list>
@@ -38,17 +41,6 @@
         </PersistentDeviceSelectionData>
         <PersistentDeviceSelectionData>
           <option name="api" value="34" />
-          <option name="brand" value="OnePlus" />
-          <option name="codename" value="OP5552L1" />
-          <option name="id" value="OP5552L1" />
-          <option name="manufacturer" value="OnePlus" />
-          <option name="name" value="CPH2415" />
-          <option name="screenDensity" value="480" />
-          <option name="screenX" value="1080" />
-          <option name="screenY" value="2412" />
-        </PersistentDeviceSelectionData>
-        <PersistentDeviceSelectionData>
-          <option name="api" value="35" />
           <option name="brand" value="OnePlus" />
           <option name="codename" value="OP5552L1" />
           <option name="id" value="OP5552L1" />
