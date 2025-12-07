@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // --- 3D lietadlo ---
     private lateinit var planeView: SceneView
     private var planeNode: ModelNode? = null
-
+    private var planeVisible = false
     // Smoothing stav
     private var lastSpeedKmh = 0.0
     private var lastRoll = 0.0
@@ -479,6 +479,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (routeLatLng.isEmpty()) return
         if (isPlaying) return
 
+        // 👉 pri prvom prehrávaní sprav model viditeľný
+        if (!planeVisible) {
+            planeNode?.isVisible = true
+            planeVisible = true
+        }
+
         isPlaying = true
         currentIndex = playbackSeekBar.progress
         hudUpdateCounter = 0
@@ -616,60 +622,58 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -------------------------------------------------------------------------
-    //  3D SCÉNA – SceneView + model lietadla (overlay nad mapou)
-    // -------------------------------------------------------------------------
-    // -------------------------------------------------------------------------
+
 //  3D SCÉNA – SceneView + model lietadla (overlay nad mapou)
 // -------------------------------------------------------------------------
     private fun setup3DScene() {
+
+        planeView = findViewById(R.id.planeView)
 
         planeView.apply {
             // vykresľuj nad mapou
             setZOrderOnTop(true)
 
-            // transparentné pozadie
+            // transparentné pozadie view
             setBackgroundColor(Color.TRANSPARENT)
             holder.setFormat(PixelFormat.TRANSLUCENT)
 
-            // SceneView – vypneme skybox a povolíme priesvitné kreslenie
+            // vypneme skybox, nech nie je žiadne vlastné pozadie
             scene.skybox = null
 
-            val clearOptions = renderer.clearOptions
-            clearOptions.clear = true
-            renderer.clearOptions = clearOptions
+            // ✨ DÔLEŽITÉ: vždy vyčisti color + depth na úplne priehľadnú farbu
+            renderer.clearOptions = renderer.clearOptions.apply {
+                clear = true              // buffer sa čistí každý frame
+                clearColor = floatArrayOf(
+                    0f, 0f, 0f, 0f       // RGBA = (0,0,0,0) – úplná priehľadnosť
+                )
+                // depth/hĺbku nechávame default (čistí sa tiež)
+            }
 
+            // miešanie s mapou (translucent)
             view.blendMode = View.BlendMode.TRANSLUCENT
 
-            // kamera – mierne zhora, aby sme videli celé lietadlo
+            // kamera – mierne zhora
             cameraNode.position = Position(0f, 0.4f, 4.0f)
             cameraNode.rotation = Rotation(0f, 0f, 0f)
+
+            // zakáž ručné otáčanie/zoomovanie modelu
+            setOnTouchListener { _, _ -> true }
         }
 
-        // 🔹 uzol s lietadlom
-        // základná orientácia – tú už máš hore ako konštantu
-// private val PLANE_BASE_ROTATION = Rotation(90f, 0f, 0f)
-
+        // uzol s lietadlom – základná orientácia zhora
         planeNode = ModelNode(
             position = Position(0f, -0.02f, 0f),
             rotation = PLANE_BASE_ROTATION,
-            scale = Scale(0.03f)      // ✨ výrazne menšie
-        )
+            scale = Scale(0.03f)
+        ).apply {
+            isVisible = false       // alebo false, ak ho chceš ukázať až pri PLAY
+        }
+
+        // pridaj do scény LEN RAZ
         planeView.addChild(planeNode!!)
 
-// kamera trochu ďalej, aby zabrela celé lietadlo
-        planeView.cameraNode.position = Position(0f, 0.1f, 3.5f)
-        planeView.cameraNode.rotation = Rotation(0f, 0f, 0f)
-
-
-// vypneme otáčanie/zoomovanie modelu prstom/myšou
-        planeView.setOnTouchListener { _, _ -> true }
-
-
-
-        planeView.addChild(planeNode!!)
-
-        planeNode?.loadModelAsync(
+        // načítaj GLB model
+        planeNode!!.loadModelAsync(
             context = this,
             lifecycle = lifecycle,
             glbFileLocation = "models/airplane_lowpoly.glb",
@@ -686,4 +690,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         )
     }
+
+
 }
