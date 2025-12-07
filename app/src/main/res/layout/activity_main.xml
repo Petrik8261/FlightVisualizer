@@ -21,15 +21,18 @@
     <!-- 3D MODEL – overlay nad mapou -->
     <io.github.sceneview.SceneView
         android:id="@+id/planeView"
-        android:layout_width="200dp"
-        android:layout_height="200dp"
+        android:layout_width="110dp"
+        android:layout_height="110dp"
         android:elevation="10dp"
-        android:layout_marginBottom="120dp"
-        app:layout_constraintBottom_toTopOf="@id/playbackSeekBar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
         android:background="@android:color/transparent"
-        />
+
+        app:layout_constraintTop_toTopOf="@id/mapFragment"
+        app:layout_constraintBottom_toBottomOf="@id/mapFragment"
+        app:layout_constraintStart_toStartOf="@id/mapFragment"
+        app:layout_constraintEnd_toEndOf="@id/mapFragment" />
+
+
+
 
     <!-- SLIDER -->
     <SeekBar
@@ -182,11 +185,18 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:src="@android:drawable/ic_dialog_map"
+        android:contentDescription="Typ mapy"
+
         android:layout_margin="16dp"
+        android:layout_marginBottom="8dp"
+
         app:tint="@android:color/white"
         app:backgroundTint="@android:color/holo_blue_dark"
-        app:layout_constraintBottom_toBottomOf="parent"
+
+        app:layout_constraintBottom_toTopOf="@id/infoPanel"
         app:layout_constraintEnd_toEndOf="parent" />
+
+
 
 </androidx.constraintlayout.widget.ConstraintLayout>
 

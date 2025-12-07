@@ -63,6 +63,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var playbackSpeed = 1.0 // 1x rýchlosť
     private var hudUpdateCounter = 0
 
+    // základná orientácia modelu v SceneView (vyladíme podľa potreby)
+    // skúšobná "normálna" poloha – zhora, nie hore nohami
+    private val PLANE_BASE_ROTATION = Rotation(90f, 0f, 0f)
+
+
+
     // "sledovací" marker (môže byť aj skrytý, nechávam pre debug)
     private var flightMarker: Marker? = null
 
@@ -431,7 +437,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             vsFpm
         )
 
-        // Heading – ak nemáme vypočítaný (index 0), necháme 0°
+        // Heading
         tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", heading)
 
         // --- Attitude: roll/pitch/yaw so smoothingom ---
@@ -451,18 +457,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             yawSmoothed
         )
 
-        // otoč 3D model podľa uhla
-        planeNode?.rotation = Rotation(
-            x = pitchSmoothed.toFloat(),   // pitch okolo X
-            y = yawSmoothed.toFloat(),     // yaw okolo Y
-            z = rollSmoothed.toFloat()     // roll okolo Z
-        )
-
         // --- G-force (load factor) ako 1/cos(roll) – aproximácia pri malom pitch ---
         val rollRad = Math.toRadians(rollSmoothed)
-        val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)   // ochrana pred delením 0
+        val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)
         tvGForce.text = String.format(Locale.ROOT, "G: %.2f", loadFactor)
+
+        planeNode?.rotation = Rotation(
+            x = PLANE_BASE_ROTATION.x + pitchSmoothed.toFloat(), // klopenie
+            y = PLANE_BASE_ROTATION.y,                            // zatiaľ nepoužijeme
+            z = PLANE_BASE_ROTATION.z + heading.toFloat()        // heading po trase
+        )
+
+
     }
+
 
     // -------------------------------------------------------------------------
     //  Playback – spustenie / zastavenie / rýchlosť
@@ -639,12 +647,24 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         // 🔹 uzol s lietadlom
+        // základná orientácia – tú už máš hore ako konštantu
+// private val PLANE_BASE_ROTATION = Rotation(90f, 0f, 0f)
+
         planeNode = ModelNode(
-            position = Position(0f, -0.1f, 0f),
-            Rotation(-90f, 0f, 0f)
-            ,   // FIX základnej orientácie
-            scale = Scale(0.5f)
+            position = Position(0f, -0.02f, 0f),
+            rotation = PLANE_BASE_ROTATION,
+            scale = Scale(0.03f)      // ✨ výrazne menšie
         )
+        planeView.addChild(planeNode!!)
+
+// kamera trochu ďalej, aby zabrela celé lietadlo
+        planeView.cameraNode.position = Position(0f, 0.1f, 3.5f)
+        planeView.cameraNode.rotation = Rotation(0f, 0f, 0f)
+
+
+// vypneme otáčanie/zoomovanie modelu prstom/myšou
+        planeView.setOnTouchListener { _, _ -> true }
+
 
 
         planeView.addChild(planeNode!!)
