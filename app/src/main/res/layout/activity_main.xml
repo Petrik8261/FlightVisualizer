@@ -21,8 +21,8 @@
     <!-- 3D MODEL – overlay nad mapou -->
     <io.github.sceneview.SceneView
         android:id="@+id/planeView"
-        android:layout_width="110dp"
-        android:layout_height="110dp"
+        android:layout_width="240dp"
+        android:layout_height="240dp"
         android:elevation="10dp"
         android:background="@android:color/transparent"
 
@@ -30,6 +30,7 @@
         app:layout_constraintBottom_toBottomOf="@id/mapFragment"
         app:layout_constraintStart_toStartOf="@id/mapFragment"
         app:layout_constraintEnd_toEndOf="@id/mapFragment" />
+
 
 
 
@@ -77,13 +78,6 @@
                 android:text="PLAY" />
 
             <Button
-                android:id="@+id/btnPause"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="PAUSE" />
-
-            <Button
                 android:id="@+id/btnStop"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -96,6 +90,30 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="1x" />
+
+            <Button
+                android:id="@+id/btnStepBack"
+                android:layout_width="60dp"
+                android:layout_height="40dp"
+                android:text="⏮"
+                android:textSize="18sp"
+                app:layout_constraintTop_toTopOf="@+id/btnPlay"
+                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
+                app:layout_constraintEnd_toStartOf="@+id/btnPlay"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btnStepForward"
+                android:layout_width="60dp"
+                android:layout_height="40dp"
+                android:text="⏭"
+                android:textSize="18sp"
+                app:layout_constraintTop_toTopOf="@+id/btnPlay"
+                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
+                app:layout_constraintStart_toEndOf="@+id/btnPlay"
+                android:layout_marginStart="8dp" />
+
+
         </LinearLayout>
 
         <!-- PRVÝ RIADOK HUD: ALT, SPD, VS, HDG -->

@@ -35,6 +35,19 @@ import com.google.android.filament.View
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
+    companion object {
+        private const val HEADING_OFFSET_DEG = 90f   // doladí smer nosu
+        private const val BASE_ROLL_DEG = 90f
+
+        // základná rotácia, ktorá model vyrovná po exporte do glTF
+        val PLANE_BASE_ROTATION = Rotation(
+            x = BASE_ROLL_DEG,
+            y = 0f,
+            z = 0f
+        )
+    }
+
+
     // --- Map + flight data ---
     private var googleMap: GoogleMap? = null
     private val TAG = "MAP_DEBUG"
@@ -45,9 +58,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // --- Playback ---
     private lateinit var playbackSeekBar: SeekBar
     private lateinit var btnPlay: Button
-    private lateinit var btnPause: Button
     private lateinit var btnStop: Button
     private lateinit var btnSpeed: Button
+    private lateinit var btnStepBack: Button
+    private lateinit var btnStepForward: Button
 
     // HUD
     private lateinit var tvAltitude: TextView
@@ -60,14 +74,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var isPlaying = false
     private var currentIndex = 0
     private val playHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var playbackSpeed = 1.0 // 1x rýchlosť
+    private var playbackSpeed = 2.0
     private var hudUpdateCounter = 0
-
-    // základná orientácia modelu v SceneView (vyladíme podľa potreby)
-    // skúšobná "normálna" poloha – zhora, nie hore nohami
-    private val PLANE_BASE_ROTATION = Rotation(90f, 0f, 0f)
-
-
 
     // "sledovací" marker (môže byť aj skrytý, nechávam pre debug)
     private var flightMarker: Marker? = null
@@ -76,11 +84,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var planeView: SceneView
     private var planeNode: ModelNode? = null
     private var planeVisible = false
+
     // Smoothing stav
     private var lastSpeedKmh = 0.0
     private var lastRoll = 0.0
     private var lastPitch = 0.0
     private var lastYaw = 0.0
+    private var lastHeading = 0.0
 
     // -------------------------------------------------------------------------
     //  onCreate – inicializácia UI, mapy, 3D scény
@@ -94,9 +104,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         // 1) UI prvky
         playbackSeekBar = findViewById(R.id.playbackSeekBar)
         btnPlay = findViewById(R.id.btnPlay)
-        btnPause = findViewById(R.id.btnPause)
         btnStop = findViewById(R.id.btnStop)
         btnSpeed = findViewById(R.id.btnSpeed)
+
+        // nové krokovacie tlačidlá (musíš mať v XML: btnStepBack, btnStepForward)
+        val btnStepBack: Button = findViewById(R.id.btnStepBack)
+        val btnStepForward: Button = findViewById(R.id.btnStepForward)
+
 
         tvAltitude = findViewById(R.id.tvAltitude)
         tvSpeed = findViewById(R.id.tvSpeed)
@@ -110,23 +124,37 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         setup3DScene()
 
         // 2) Playback tlačidlá
-        btnPlay.setOnClickListener { startPlayback() }
 
-        btnPause.setOnClickListener {
-            // pauza – zastaví animáciu, ale nechá currentIndex aj slider tam, kde sú
-            stopPlayback()
+        // ▶ / ⏸ v jednom tlačidle
+        btnPlay.setOnClickListener {
+            if (isPlaying) {
+                pausePlayback()
+            } else {
+                startPlayback()
+            }
         }
 
+        // Reset – vráti simuláciu na začiatok
         btnStop.setOnClickListener {
-            stopPlayback()
-            if (routeLatLng.isNotEmpty()) {
-                currentIndex = 0
-                playbackSeekBar.progress = 0
-                val start = routeLatLng.first()
-                flightMarker?.position = start
-                googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(start, 15f))
-                updateUiForIndex(0)
-            }
+            resetPlayback()
+        }
+
+        // krok späť (1 frame dozadu)
+        btnStepBack.setOnClickListener {
+            pausePlayback()
+            if (routeLatLng.isEmpty()) return@setOnClickListener
+
+            currentIndex = (currentIndex - 1).coerceAtLeast(0)
+            showFrame(currentIndex)
+        }
+
+        // krok vpred (1 frame dopredu)
+        btnStepForward.setOnClickListener {
+            pausePlayback()
+            if (routeLatLng.isEmpty()) return@setOnClickListener
+
+            currentIndex = (currentIndex + 1).coerceAtMost(routeLatLng.lastIndex)
+            showFrame(currentIndex)
         }
 
         btnSpeed.setOnClickListener {
@@ -160,6 +188,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mapFragment.getMapAsync(this)
     }
 
+
     // -------------------------------------------------------------------------
     //  Map callback – keď je Google mapa pripravená
     // -------------------------------------------------------------------------
@@ -170,70 +199,53 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         Log.i(TAG, "✔️ onMapReady: Mapa je pripravená!")
         Toast.makeText(this, "Mapa pripravená 👍", Toast.LENGTH_SHORT).show()
 
-        // 1) Načítať body letu z raw súboru
-        flightPoints = loadFlightFromRaw()
+        // 1) Načítať body letu z KML
+        flightPoints = loadFlightFromKml(R.raw.zaznam_dat_letu)
 
         if (flightPoints.isEmpty()) {
             Toast.makeText(this, "Žiadne body v logu 😢", Toast.LENGTH_LONG).show()
             return
         }
 
-        // 2) LatLng trasa + čistenie od skokov
-        val rawRoute = flightPoints.map { LatLng(it.latitude, it.longitude) }
-        routeLatLng = cleanRoute(rawRoute, maxStepMeters = 500.0)
-
-        if (routeLatLng.size < 2) {
-            Toast.makeText(this, "Príliš málo bodov po čistení trasy", Toast.LENGTH_LONG).show()
+        if (flightPoints.size < 2) {
+            Toast.makeText(this, "Málo bodov v KML", Toast.LENGTH_LONG).show()
             return
         }
 
-        // 3) Nastavenie slidera
+        checkForCrazyJumps(flightPoints)
+
+        // 2) LatLng trasa – vezmeme všetky body
+        routeLatLng = flightPoints.map { LatLng(it.latitude, it.longitude) }
+
+        // 3) slider
         playbackSeekBar.max = routeLatLng.size - 1
         playbackSeekBar.progress = 0
+        currentIndex = 0
 
         playbackSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 if (routeLatLng.isEmpty()) return
 
-                currentIndex = progress
-                val point = routeLatLng[progress]
-
-                // Presun kamery na danú pozíciu – lietadlo je v strede obrazovky
-                googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
-
-                // Ak chceš, marker môžeš nechať ako vizuálny bod
-                flightMarker?.position = point
-
-                // aktualizuj údaje + 3D model podľa flightPoints[currentIndex]
-                updateUiForIndex(currentIndex)
+                currentIndex = progress.coerceIn(0, routeLatLng.lastIndex)
+                showFrame(currentIndex)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                // pri ťahaní slidera stopneme auto prehrávanie
                 stopPlayback()
             }
 
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                // nateraz nič
-            }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
         // 4) Vykresliť polyline trasy
         drawRoute(routeLatLng)
 
-        // 5) Markery na začiatok/koniec (môžeš ponechať pre info)
+        // 5) Marker na koniec (začiatok máš cez kameru)
         val startPoint = routeLatLng.first()
         val startTime = flightPoints.first().time
         val endPoint = routeLatLng.last()
         val endTime = flightPoints.last().time
-
-        flightMarker = googleMap?.addMarker(
-            MarkerOptions()
-                .position(startPoint)
-                .title("Začiatok letu $startTime")
-                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
-        )
 
         googleMap?.addMarker(
             MarkerOptions()
@@ -242,62 +254,98 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
         )
 
-        // kamera na začiatok
+        // prvý pohľad – kamera + HUD + 3D
+        currentIndex = 0
         googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(startPoint, 15f))
-
-        // inicializuj panel údajov na prvý bod
-        updateUiForIndex(0)
+        showFrame(0)
     }
 
     // -------------------------------------------------------------------------
-    //  Načítanie flight logu z res/raw/flight_record.txt
+    //  Kontrola „teleportov“ v dátach
     // -------------------------------------------------------------------------
-    private fun loadFlightFromRaw(): List<FlightPoint> {
-        val result = mutableListOf<FlightPoint>()
+    private fun checkForCrazyJumps(
+        points: List<FlightPoint>,
+        thresholdMeters: Double = 50000.0 // 50 km – doladíš podľa seba
+    ) {
+        if (points.size < 2) return
 
-        val inputStream = resources.openRawResource(R.raw.flight_record)
+        var crazyFound = false
 
-        inputStream.bufferedReader().useLines { lines ->
-            lines.forEach { line ->
-                val trimmed = line.trim()
-                if (trimmed.isEmpty()) return@forEach
-                if (trimmed.startsWith("Time")) return@forEach   // preskočíme hlavičku
+        for (i in 1 until points.size) {
+            val prev = points[i - 1]
+            val cur = points[i]
 
-                val parts = trimmed.split(Regex("\\s+"))
-                if (parts.size < 9) {
-                    Log.w(TAG, "Preskakujem kratký riadok: $line")
-                    return@forEach
-                }
+            val dist = distanceMeters(
+                LatLng(prev.latitude, prev.longitude),
+                LatLng(cur.latitude, cur.longitude)
+            )
 
-                try {
-                    val time = parts[0]
-                    val lat = parts[1].toDouble()
-                    val lon = parts[2].toDouble()
-                    val temp = parts[3].toDouble()
-                    val pressure = parts[4].toDouble()
-                    val altitude = parts[5].toDouble()
-                    val x = parts[6].toDouble()
-                    val y = parts[7].toDouble()
-                    val z = parts[8].toDouble()
-
-                    result += FlightPoint(
-                        time = time,
-                        latitude = lat,
-                        longitude = lon,
-                        temperature = temp,
-                        pressure = pressure,
-                        altitude = altitude,
-                        x = x,
-                        y = y,
-                        z = z
-                    )
-                } catch (e: NumberFormatException) {
-                    Log.w(TAG, "Nedá sa parsovať riadok: $line", e)
-                }
+            if (dist > thresholdMeters) {
+                crazyFound = true
+                Log.w(
+                    TAG,
+                    "⚠️ Veľký skok v logu: ${"%.1f".format(dist)} m medzi indexom ${i - 1} a $i"
+                )
             }
         }
 
-        Log.i(TAG, "Načítaných bodov: ${result.size}")
+        if (crazyFound) {
+            Toast.makeText(
+                this,
+                "Upozornenie: v zázname sú veľké skoky (teleporty).",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    //  Načítanie flight logu z res/raw/zaznam_dat_letu.kml
+    // -------------------------------------------------------------------------
+    private fun loadFlightFromKml(resId: Int): List<FlightPoint> {
+        val result = mutableListOf<FlightPoint>()
+
+        val inputStream = resources.openRawResource(resId)
+
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        val builder = factory.newDocumentBuilder()
+        val doc = builder.parse(inputStream)
+        doc.documentElement.normalize()
+
+        // V KML sú hodnoty v <Camera> (v rámci gx:FlyTo)
+        val cameraNodes = doc.getElementsByTagName("Camera")
+
+        for (i in 0 until cameraNodes.length) {
+            val node = cameraNodes.item(i)
+            if (node is org.w3c.dom.Element) {
+
+                fun get(tag: String): Double {
+                    val list = node.getElementsByTagName(tag)
+                    if (list.length == 0) return 0.0
+                    val text = list.item(0).textContent.trim()
+                    return text.toDoubleOrNull() ?: 0.0
+                }
+
+                val lon = get("longitude")
+                val lat = get("latitude")
+                val alt = get("altitude")
+                val heading = get("heading")
+                val pitch = get("tilt")
+                val roll = get("roll")
+
+                // čas nemáme → použijeme index ako string
+                result += FlightPoint(
+                    time = i.toString(),
+                    latitude = lat,
+                    longitude = lon,
+                    altitude = alt,
+                    heading = heading,
+                    pitch = pitch,
+                    roll = roll
+                )
+            }
+        }
+
+        Log.i(TAG, "Načítaných bodov z KML: ${result.size}")
         return result
     }
 
@@ -358,6 +406,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    private fun normalizeAngleDeg(angle: Float): Float {
+        var a = angle % 360f
+        if (a < 0f) a += 360f
+        return a
+    }
+
     // Výpočet kurzu/headingu medzi dvomi bodmi (0–360°)
     private fun headingDegrees(from: LatLng, to: LatLng): Double {
         val lat1 = Math.toRadians(from.latitude)
@@ -371,15 +425,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return bearing
     }
 
-    // Zjemnenie zmien uhla – aby roll/pitch/yaw neskákali
-    private fun smoothAngle(prev: Double, next: Double): Double {
-        val diff = abs(prev - next)
+    // Exponenciálne vyhladzovanie uhla v stupňoch (0–360 / -180..180)
+    private fun smoothAngle(prev: Double, new: Double, alpha: Double = 0.1): Double {
+        // normalizuj rozdiel na <-180, 180>, aby 359 -> 0 neskákalo
+        var diff = new - prev
+        while (diff > 180.0) diff -= 360.0
+        while (diff < -180.0) diff += 360.0
 
-        return when {
-            diff < 0.5 -> (prev + next) / 2
-            diff < 5.0 -> next * 0.7 + prev * 0.3
-            else -> next
-        }
+        // jednoduché "prev + časť rozdielu"
+        return prev + diff * alpha
     }
 
     // -------------------------------------------------------------------------
@@ -390,87 +444,95 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         val fp = flightPoints[index]
 
-        // ALT
+        // --- ALT ---
         tvAltitude.text = "ALT: ${fp.altitude.toInt()} m"
 
-        // --- Horizontal speed + vertical speed + heading ---
-        var speedKmh = 0.0
-        var vsMs = 0.0
-        var heading = 0.0
+        // surové hodnoty z KML
+        val rawHeading = fp.heading
+        val rawPitch = fp.pitch   // tilt
+        val rawRoll = fp.roll
 
-        if (index > 0) {
-            val prev = flightPoints[index - 1]
-
-            val prevLatLng = LatLng(prev.latitude, prev.longitude)
-            val curLatLng = LatLng(fp.latitude, fp.longitude)
-
-            val distMeters = distanceMeters(prevLatLng, curLatLng)
-
-            val tPrev = parseTimeToSeconds(prev.time)
-            val tCur = parseTimeToSeconds(fp.time)
-            val dt = (tCur - tPrev).coerceAtLeast(1) // nech nie je 0
-
-            val speedMs = distMeters / dt.toDouble()
-            speedKmh = speedMs * 3.6
-
-            // vertikálna rýchlosť (m/s)
-            val dz = fp.altitude - prev.altitude
-            vsMs = dz / dt.toDouble()
-
-            // heading (0–360°)
-            heading = headingDegrees(prevLatLng, curLatLng)
+        // inicializácia pri prvom bode
+        if (index == 0) {
+            lastHeading = rawHeading
+            lastPitch = rawPitch
+            lastRoll = rawRoll
         }
 
-        // Rýchlosť – knots + km/h, jednoduchý smoothing na 0
-        if (speedKmh > 0.1) {
-            lastSpeedKmh = speedKmh
-        }
-        val speedKnots = lastSpeedKmh / 1.852
-        tvSpeed.text = "SPD: ${speedKnots.roundToInt()} kt (${lastSpeedKmh.roundToInt()} km/h)"
+        // smoothing (môžeš upraviť alfy)
+        val headingSmoothed = smoothAngle(lastHeading, rawHeading, 0.15)
+        val pitchSmoothed = smoothAngle(lastPitch, rawPitch, 0.15)
+        val rollSmoothed = smoothAngle(lastRoll, rawRoll, 0.15)
 
-        // Vertikálna rýchlosť v m/s a ft/min
-        val vsFpm = vsMs * 196.85
-        tvVerticalSpeed.text = String.format(
-            Locale.ROOT,
-            "VS: %.1f m/s (%.0f ft/min)",
-            vsMs,
-            vsFpm
-        )
-
-        // Heading
-        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", heading)
-
-        // --- Attitude: roll/pitch/yaw so smoothingom ---
-        val rollSmoothed = smoothAngle(lastRoll, fp.x)
-        val pitchSmoothed = smoothAngle(lastPitch, fp.y)
-        val yawSmoothed = smoothAngle(lastYaw, fp.z)
-
-        lastRoll = rollSmoothed
+        lastHeading = headingSmoothed
         lastPitch = pitchSmoothed
-        lastYaw = yawSmoothed
+        lastRoll = rollSmoothed
 
+        // HUD
+        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", headingSmoothed)
         tvPitchRoll.text = String.format(
             Locale.ROOT,
             "ROLL: %.1f° | PITCH: %.1f° | YAW: %.1f°",
             rollSmoothed,
             pitchSmoothed,
-            yawSmoothed
+            0.0
         )
 
-        // --- G-force (load factor) ako 1/cos(roll) – aproximácia pri malom pitch ---
+        // G-force z rollu
         val rollRad = Math.toRadians(rollSmoothed)
         val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)
         tvGForce.text = String.format(Locale.ROOT, "G: %.2f", loadFactor)
 
+// ----------------------------------------
+// ROTÁCIA 3D MODELU
+// ----------------------------------------
+
+// heading: KML 0° = sever, 90° = východ
+// SceneView rotujeme opačne → -heading
+        val visualHeading = normalizeAngleDeg(
+            (-headingSmoothed).toFloat() + HEADING_OFFSET_DEG
+        )
+
+// PITCH – nos hore/dole
+// 90° = rovný let → posunieme tak, aby 0° = rovno
+        val pitchPhysical = pitchSmoothed.toFloat() - 90f      // >0 = nos hore
+// bez zosilnenia, len zachováme doterajší smer
+        val pitchVisual = -pitchPhysical
+
+// ROLL – náklon krídel
+// reálna hodnota z logu, bez zosilnenia
+        val rollPhysical = rollSmoothed.toFloat()
+        val rollVisual = rollPhysical    // ak by sa klopil opačne, daj: -rollPhysical
+
         planeNode?.rotation = Rotation(
-            x = PLANE_BASE_ROTATION.x + pitchSmoothed.toFloat(), // klopenie
-            y = PLANE_BASE_ROTATION.y,                            // zatiaľ nepoužijeme
-            z = PLANE_BASE_ROTATION.z + heading.toFloat()        // heading po trase
+            x = PLANE_BASE_ROTATION.x + rollVisual,  // základ + dynamický roll
+            y = pitchVisual,                         // pitch 1 : 1 z logu
+            z = visualHeading                        // smer nosu po trase
         )
 
 
     }
 
+    // -------------------------------------------------------------------------
+    //  Jeden "frame" – presun mapy, marker, HUD + 3D model
+    // -------------------------------------------------------------------------
+    private fun showFrame(index: Int) {
+        if (routeLatLng.isEmpty()) return
+        if (index < 0 || index >= routeLatLng.size) return
+        if (index >= flightPoints.size) return   // bezpečnostná poistka
+
+        val point = routeLatLng[index]
+
+        // Presun kamery a markeru na daný bod
+        googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
+        flightMarker?.position = point
+
+        // HUD + 3D model pre tento index
+        updateUiForIndex(index)
+
+        // slider nech ukazuje rovnaký index
+        playbackSeekBar.progress = index
+    }
 
     // -------------------------------------------------------------------------
     //  Playback – spustenie / zastavenie / rýchlosť
@@ -479,23 +541,42 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (routeLatLng.isEmpty()) return
         if (isPlaying) return
 
-        // 👉 pri prvom prehrávaní sprav model viditeľný
         if (!planeVisible) {
             planeNode?.isVisible = true
             planeVisible = true
         }
 
         isPlaying = true
-        currentIndex = playbackSeekBar.progress
-        hudUpdateCounter = 0
+        btnPlay.text = "Pause"   // alebo "⏸"
 
+        currentIndex = playbackSeekBar.progress
         playHandler.post(playStepRunnable)
     }
 
-    private fun stopPlayback() {
+    private fun pausePlayback() {
         isPlaying = false
         playHandler.removeCallbacks(playStepRunnable)
+        btnPlay.text = "Play"    // alebo "▶"
     }
+
+    // stopPlayback necháme ako alias na pauzu, kvôli starým volaniam
+    private fun stopPlayback() {
+        pausePlayback()
+    }
+
+    // Reset tlačidla
+    private fun resetPlayback() {
+        pausePlayback()
+        if (routeLatLng.isNotEmpty()) {
+            currentIndex = 0
+            playbackSeekBar.progress = 0
+            val start = routeLatLng.first()
+            flightMarker?.position = start
+            googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(start, 15f))
+            updateUiForIndex(0)
+        }
+    }
+
 
     private val playStepRunnable = object : Runnable {
         override fun run() {
@@ -506,49 +587,38 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 return
             }
 
-            val point = routeLatLng[currentIndex]
-
-            // Kamera sleduje trasu – lietadlo v overlay je v strede obrazovky
-            googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
-
-            // Marker je voliteľný – skôr pre debug
-            flightMarker?.position = point
-
-            // HUD + 3D update každé 2–3 kroky, aby to neblikalo
-            if (hudUpdateCounter % 2 == 0) {
-                updateUiForIndex(currentIndex)
-                playbackSeekBar.progress = currentIndex
-            }
-
-            hudUpdateCounter++
+            showFrame(currentIndex)
             currentIndex++
 
-            val baseDelay = 80L
-            val delay = (baseDelay / playbackSpeed).toLong().coerceAtLeast(10L)
+            val delay = when (playbackSpeed) {
+                -1.0 -> 1000L              // REAL TIME placeholder (1 sec per frame)
+                else -> (200L / playbackSpeed).toLong().coerceAtLeast(40L)
+            }
 
             playHandler.postDelayed(this, delay)
         }
+
     }
 
     private fun cyclePlaybackSpeed() {
         playbackSpeed = when (playbackSpeed) {
-            0.5 -> 1.0
-            1.0 -> 2.0
-            2.0 -> 4.0
-            else -> 0.5
+            2.0 -> 1.0     // z normálnej rýchlosti na polovičnú
+            1.0 -> 2.0     // späť na normálnu (interné 2×)
+            else -> 2.0
         }
 
         val label = when (playbackSpeed) {
-            0.5 -> "0.5x"
-            1.0 -> "1x"
-            2.0 -> "2x"
-            4.0 -> "4x"
-            else -> "${playbackSpeed}x"
+            2.0 -> "1X"     // interná rýchlosť 2× = normálna
+            1.0 -> "0.5X"   // interná rýchlosť 1× = polovičná
+            else -> "1X"
         }
 
         btnSpeed.text = label
         Toast.makeText(this, "Rýchlosť prehrávania: $label", Toast.LENGTH_SHORT).show()
     }
+
+
+
 
     // -------------------------------------------------------------------------
     //  Kreslenie polyline trasy
@@ -622,9 +692,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-
-//  3D SCÉNA – SceneView + model lietadla (overlay nad mapou)
-// -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    //  3D SCÉNA – SceneView + model lietadla (overlay nad mapou)
+    // -------------------------------------------------------------------------
     private fun setup3DScene() {
 
         planeView = findViewById(R.id.planeView)
@@ -640,45 +710,42 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             // vypneme skybox, nech nie je žiadne vlastné pozadie
             scene.skybox = null
 
-            // ✨ DÔLEŽITÉ: vždy vyčisti color + depth na úplne priehľadnú farbu
+            // vždy vyčisti color + depth na úplne priehľadnú farbu
             renderer.clearOptions = renderer.clearOptions.apply {
-                clear = true              // buffer sa čistí každý frame
-                clearColor = floatArrayOf(
-                    0f, 0f, 0f, 0f       // RGBA = (0,0,0,0) – úplná priehľadnosť
-                )
-                // depth/hĺbku nechávame default (čistí sa tiež)
+                clear = true
+                clearColor = floatArrayOf(0f, 0f, 0f, 0f)
             }
 
             // miešanie s mapou (translucent)
             view.blendMode = View.BlendMode.TRANSLUCENT
 
             // kamera – mierne zhora
-            cameraNode.position = Position(0f, 0.4f, 4.0f)
+            cameraNode.position = Position(0f, 0f, 4.0f)
             cameraNode.rotation = Rotation(0f, 0f, 0f)
 
             // zakáž ručné otáčanie/zoomovanie modelu
             setOnTouchListener { _, _ -> true }
         }
 
-        // uzol s lietadlom – základná orientácia zhora
+        // uzol s lietadlom – stred scény, žiadne offsety
         planeNode = ModelNode(
-            position = Position(0f, -0.02f, 0f),
+            position = Position(0f, 0f, 0f),
             rotation = PLANE_BASE_ROTATION,
-            scale = Scale(0.03f)
+            scale = Scale(0.03f)   // podľa potreby môžeš zmenšiť napr. na 0.3f
         ).apply {
-            isVisible = false       // alebo false, ak ho chceš ukázať až pri PLAY
+            isVisible = true  // ukážeme až pri PLAY
         }
+        planeVisible = true
 
-        // pridaj do scény LEN RAZ
         planeView.addChild(planeNode!!)
 
-        // načítaj GLB model
+        // načítaj GLB model – názov podľa toho, ako si ho exportoval z Blenderu
         planeNode!!.loadModelAsync(
             context = this,
             lifecycle = lifecycle,
-            glbFileLocation = "models/airplane_lowpoly.glb",
+            glbFileLocation = "models/airplane_lowpoly_final.glb",
             onLoaded = {
-                Log.i(TAG, "✔️ 3D model lietadla načítaný")
+                Log.i(TAG, "✔️ 3D model lietadla načítaný (airplane_lowpoly_final.glb)")
             },
             onError = { exception ->
                 Log.e(TAG, "Chyba pri načítaní 3D modelu", exception)
@@ -690,6 +757,5 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         )
     }
-
-
 }
+
