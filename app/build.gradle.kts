@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.androidx.runtime)
     implementation(libs.sceneview.android)
     implementation("com.google.android.material:material:1.12.0")
+    implementation(libs.androidx.activity)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -24,6 +24,7 @@ class ImportActivity : AppCompatActivity() {
     private lateinit var btnClearSelection: Button
     private lateinit var tvSelectedFile: TextView
 
+    private lateinit var vehicleType: String
     private var selectedUri: Uri? = null
 
     // SAF picker
@@ -32,15 +33,14 @@ class ImportActivity : AppCompatActivity() {
     ) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
 
-
         selectedUri = uri
+
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
         } catch (e: SecurityException) {
-
             Log.w(TAG, "takePersistableUriPermission failed: ${e.message}")
         }
 
@@ -54,17 +54,19 @@ class ImportActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_import)
 
+        // príde zo StartActivity
+        vehicleType = intent.getStringExtra(MainActivity.EXTRA_VEHICLE_TYPE)
+            ?: MainActivity.VEHICLE_PLANE
+
         btnPickFile = findViewById(R.id.btnPickFile)
         btnOpenPlayer = findViewById(R.id.btnOpenPlayer)
         btnClearSelection = findViewById(R.id.btnClearSelection)
         tvSelectedFile = findViewById(R.id.tvSelectedFile)
 
-
         setPlayerButtonEnabled(false)
         tvSelectedFile.text = "(žiadny)"
 
         btnPickFile.setOnClickListener {
-
             pickFileLauncher.launch(arrayOf("*/*"))
         }
 
@@ -81,10 +83,11 @@ class ImportActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            val intent = Intent(this, MainActivity::class.java).apply {
+            val i = Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_VEHICLE_TYPE, vehicleType)
                 putExtra(MainActivity.EXTRA_FILE_URI, uri.toString())
             }
-            startActivity(intent)
+            startActivity(i)
         }
     }
 
@@ -108,5 +111,6 @@ class ImportActivity : AppCompatActivity() {
         }
     }
 }
+
 
 

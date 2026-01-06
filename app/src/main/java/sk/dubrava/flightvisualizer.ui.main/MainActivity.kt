@@ -44,11 +44,22 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     companion object {
         private const val TAG = "MAP_DEBUG"
 
-        // orientácia modelu
-        private const val HEADING_OFFSET_DEG = 90f
-        private const val BASE_ROLL_DEG = 90f
+        const val EXTRA_VEHICLE_TYPE = "extra_vehicle_type"
+        const val EXTRA_FILE_URI = "extra_file_uri"
+        const val VEHICLE_DRONE = "DRONE"
+        const val VEHICLE_PLANE = "PLANE"
 
-        // scale efekt podľa zmeny ALT
+        private const val TAIL_FORWARD_FIX_ENABLED = true
+
+        // --- MODEL AXIS TUNING (SceneView: X=right, Y=up, Z=forward) ---
+        private const val YAW_OFFSET_DEG = 0f      // ak bude nos o 90/180° mimo, sem dáš 90f alebo 180f
+        private const val YAW_SIGN = 1f            // ak sa točí opačne, daj -1f
+
+        private const val PITCH_SIGN = 1f          // ak pitch ide opačne, daj -1f
+        private const val ROLL_SIGN = 1f           // ak roll ide opačne, daj -1f
+
+
+        // scale efekt podľa zmeny ALT (pre lietadlo)
         private const val BASE_MODEL_SCALE = 0.03f
         private const val SCALE_EFFECT = 0.18f
         private const val SCALE_SMOOTH_ALPHA = 0.18f
@@ -60,28 +71,23 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val MAX_SPEED_KMH = 250.0
         private const val MAX_VS_MPS = 30.0
 
-        // --- TXT/CSV parsing + cleaning ---
-        private const val TXT_MAX_STEP_DIST_M = 500.0      // teleport filter pre Arduino log (doladíš)
-        private const val TXT_MIN_DT_SEC = 0.05           // min dt, inak N/A
-        private const val TXT_MAX_SPEED_KMH = 350.0       // sanity pre speed
-        private const val TXT_MAX_VS_MPS = 30.0           // sanity pre VS
-
-
         // či povolíme zobrazovať speed odhadovanú z KML Tour (gx:duration)
         private const val ALLOW_ESTIMATED_SPEED_FROM_KML_TOUR = false
 
-        const val EXTRA_FILE_URI = "extra_file_uri"
-
-        val PLANE_BASE_ROTATION = Rotation(
-            x = BASE_ROLL_DEG,
-            y = 0f,
-            z = 0f
-        )
+        // Drone scale (konštantné, bez “pumpovania” podľa ALT)
+        private const val DRONE_SCALE = 0.12f
     }
 
     private var googleMap: GoogleMap? = null
     private var flightPoints: List<FlightPoint> = emptyList()
     private var routeLatLng: List<LatLng> = emptyList()
+
+    private lateinit var vehicleType: String
+
+    // --- 3D gating (aby nebol skok) ---
+    private var modelReady = false
+    private var pendingRotation: Rotation? = null
+    private var pendingScale: Scale? = null
 
     private lateinit var playbackSeekBar: SeekBar
     private lateinit var btnPlay: Button
@@ -109,7 +115,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // --- 3D ---
     private lateinit var planeView: SceneView
     private var planeNode: ModelNode? = null
-    private var planeVisible = false
 
     // smoothing stav
     private var lastRoll = 0.0
@@ -120,32 +125,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var lastScale = BASE_MODEL_SCALE.toDouble()
     private var lastAltitudeM = Double.NaN
 
-    private fun Double.isValidLat() = this.isFinite() && this in -90.0..90.0
-    private fun Double.isValidLon() = this.isFinite() && this in -180.0..180.0
+    // -----------------------------
+    // Basic helpers
+    // -----------------------------
+    private fun clamp(v: Double, min: Double, max: Double): Double = max(min, min(v, max))
 
-    private fun parseTimeToSecondsSafe(s: String): Double? {
-
-        val t = s.trim()
-        if (t.isEmpty()) return null
-
-        t.toDoubleOrNull()?.let { return it }
-
-        val parts = t.split(":")
-        if (parts.size < 2) return null
-
-        fun p(x: String): Double = x.toDoubleOrNull() ?: 0.0
-
-        return when (parts.size) {
-            2 -> p(parts[0]) * 60.0 + p(parts[1])
-            3 -> p(parts[0]) * 3600.0 + p(parts[1]) * 60.0 + p(parts[2])
-            else -> null
-        }
-    }
-
-    private fun sanitizeHeading360(deg: Double): Double {
-        var a = deg % 360.0
-        if (a < 0) a += 360.0
-        return a
+    private fun norm360(d: Double): Double {
+        var x = d % 360.0
+        if (x < 0) x += 360.0
+        return x
     }
 
     private fun angleDiffDeg(a: Double, b: Double): Double {
@@ -155,19 +143,54 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return d
     }
 
-    private fun clamp(v: Double, min: Double, max: Double): Double = max(min, min(v, max))
+    private fun distanceMeters(a: LatLng, b: LatLng): Double {
+        val R = 6371000.0
+        val lat1 = Math.toRadians(a.latitude)
+        val lat2 = Math.toRadians(b.latitude)
+        val dLat = lat2 - lat1
+        val dLon = Math.toRadians(b.longitude - a.longitude)
 
-    private fun norm360(d: Double): Double {
-        var x = d % 360.0
-        if (x < 0) x += 360.0
-        return x
+        val sinLat = sin(dLat / 2)
+        val sinLon = sin(dLon / 2)
+
+        val aa = sinLat * sinLat + cos(lat1) * cos(lat2) * sinLon * sinLon
+        val c = 2 * atan2(sqrt(aa), sqrt(1 - aa))
+        return R * c
     }
 
+    private fun headingDegrees(from: LatLng, to: LatLng): Double {
+        val lat1 = Math.toRadians(from.latitude)
+        val lat2 = Math.toRadians(to.latitude)
+        val dLon = Math.toRadians(to.longitude - from.longitude)
 
+        val y = sin(dLon) * cos(lat2)
+        val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        var bearing = Math.toDegrees(atan2(y, x))
+        if (bearing < 0) bearing += 360.0
+        return bearing
+    }
+
+    private fun normalizeAngleDeg(angle: Float): Float {
+        var a = angle % 360f
+        if (a < 0f) a += 360f
+        return a
+    }
+
+    private fun smoothAngle(prev: Double, new: Double, alpha: Double = 0.15): Double {
+        var diff = new - prev
+        while (diff > 180.0) diff -= 360.0
+        while (diff < -180.0) diff += 360.0
+        return prev + diff * alpha
+    }
+
+    // -----------------------------
+    // Android lifecycle
+    // -----------------------------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(TAG, "MainActivity: onCreate")
         setContentView(R.layout.activity_main)
+
+        vehicleType = intent.getStringExtra(EXTRA_VEHICLE_TYPE) ?: VEHICLE_PLANE
 
         playbackSeekBar = findViewById(R.id.playbackSeekBar)
         btnPlay = findViewById(R.id.btnPlay)
@@ -215,7 +238,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             .findFragmentById(R.id.mapFragment) as? SupportMapFragment
 
         if (mapFragment == null) {
-            Log.e(TAG, "❌ MapFragment sa NENAŠIEL! Skontroluj ID v XML.")
             Toast.makeText(this, "MapFragment sa nenašiel!", Toast.LENGTH_LONG).show()
             return
         }
@@ -243,8 +265,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             return
         }
 
-        checkForCrazyJumps(flightPoints)
-
         routeLatLng = flightPoints.map { LatLng(it.latitude, it.longitude) }
 
         playbackSeekBar.max = routeLatLng.size - 1
@@ -259,10 +279,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 showFrame(currentIndex)
             }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                pausePlayback()
-            }
-
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = pausePlayback()
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
@@ -271,48 +288,17 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val startPoint = routeLatLng.first()
         val endPoint = routeLatLng.last()
 
-        googleMap?.addMarker(
-            MarkerOptions()
-                .position(endPoint)
-                .title("Koniec letu")
-                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
-        )
+
 
         googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(startPoint, 15f))
         showFrame(0)
     }
 
-    // -------------------------------------------------------------------------
-    // Teleport check
-    // -------------------------------------------------------------------------
-    private fun checkForCrazyJumps(points: List<FlightPoint>, thresholdMeters: Double = 50000.0) {
-        if (points.size < 2) return
-        var crazyFound = false
-
-        for (i in 1 until points.size) {
-            val prev = points[i - 1]
-            val cur = points[i]
-            val dist = distanceMeters(
-                LatLng(prev.latitude, prev.longitude),
-                LatLng(cur.latitude, cur.longitude)
-            )
-            if (dist > thresholdMeters) {
-                crazyFound = true
-                Log.w(TAG, "⚠️ Veľký skok: ${"%.1f".format(dist)} m medzi ${i - 1} a $i")
-            }
-        }
-
-        if (crazyFound) {
-            Toast.makeText(this, "Upozornenie: v zázname sú veľké skoky.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // LOAD FROM URI (dispatcher)
-    // -------------------------------------------------------------------------
-    private fun loadFlightFromUri(uri: android.net.Uri): List<FlightPoint> {
+    // -----------------------------
+    private fun loadFlightFromUri(uri: Uri): List<FlightPoint> {
         val name = guessFileName(uri)?.lowercase(Locale.ROOT) ?: ""
-
         return try {
             when {
                 name.endsWith(".kml") -> loadFlightFromKmlUri(uri)
@@ -327,7 +313,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             emptyList()
         }
     }
-
 
     private fun guessFileName(uri: Uri): String? {
         val cursor = contentResolver.query(
@@ -344,9 +329,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return uri.lastPathSegment
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // KML FROM URI
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun loadFlightFromKmlUri(uri: Uri): List<FlightPoint> {
         val inputStream = contentResolver.openInputStream(uri) ?: return emptyList()
 
@@ -390,7 +375,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                     val lat = node.getDouble("latitude")
                     val alt = node.getDouble("altitude")
                     val heading = node.getDouble("heading")
-                    val pitch = node.getDouble("tilt")
+                    val tilt = node.getDouble("tilt")
+                    val pitch = tilt - 90.0   // 90 -> 0 (rovno), 100 -> +10, 80 -> -10
                     val roll = node.getDouble("roll")
 
                     val flyTo = findFlyToElement(node)
@@ -415,7 +401,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             if (raw.size < 2) return@use raw
 
-            // segment i-1 -> i (dt = raw[i].dtSec)
             raw.mapIndexed { idx, fp ->
                 if (idx == 0) {
                     fp.copy(
@@ -447,7 +432,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                     val spdOk = spd != null && spd.isFinite() && spd <= MAX_SPEED_KMH
 
                     fp.copy(
-                        yawDeg = fp.heading, // v KML je yaw ≈ heading
+                        yawDeg = fp.heading,
                         vsMps = if (vsOk) vs else null,
                         speedKmh = if (spdOk) spd else null
                     )
@@ -456,287 +441,174 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-
-    private fun loadFlightFromTxtUri(uri: android.net.Uri): List<FlightPoint> {
+    // -----------------------------
+    // TXT / CSV FROM URI
+    // -----------------------------
+    private fun loadFlightFromTxtUri(uri: Uri): List<FlightPoint> {
         val input = contentResolver.openInputStream(uri) ?: return emptyList()
 
         val lines = input.bufferedReader().useLines { seq ->
-            seq.map { it.trimEnd() }   // dôležité: nechaj začiatok, ale odstráň konce
-                .filter { it.isNotBlank() }
+            seq.map { it.trim() }
+                .filter { it.isNotEmpty() }
                 .toList()
         }
-        if (lines.isEmpty()) return emptyList()
+        if (lines.size < 2) return emptyList()
 
-        // -----------------------------
-        // Helpers (lokálne, aby nič nechýbalo)
-        // -----------------------------
-        fun splitLineSmart(line: String): List<String> {
-            val t = line.trim()
-            return when {
-                t.contains("\t") -> t.split(Regex("\t+")).map { it.trim() }          // TAB-friendly
-                t.contains(",")  -> t.split(",").map { it.trim() }                   // CSV
-                else             -> t.split(Regex("\\s+")).map { it.trim() }         // fallback
-            }.filter { it.isNotEmpty() }
+        fun splitLineSmart(line: String): List<String> =
+            when {
+                line.contains("\t") -> line.split(Regex("\t+"))
+                line.contains(",") -> line.split(",")
+                else -> line.split(Regex("\\s+"))
+            }.map { it.trim() }
+
+        fun toD(s: String?): Double? = s?.replace(",", ".")?.toDoubleOrNull()
+
+        fun Double.isValidLat() = this.isFinite() && this in -90.0..90.0
+        fun Double.isValidLon() = this.isFinite() && this in -180.0..180.0
+
+        fun parseHmsToSec(s: String): Double? {
+            val p = s.trim().split(":")
+            if (p.size != 3) return null
+            val h = p[0].toIntOrNull() ?: return null
+            val m = p[1].toIntOrNull() ?: return null
+            val sec = p[2].toIntOrNull() ?: return null
+            return (h * 3600 + m * 60 + sec).toDouble()
         }
 
-        fun toD(s: String?): Double? =
-            s?.trim()
-                ?.replace(",", ".")
-                ?.toDoubleOrNull()
+        val header = splitLineSmart(lines.first()).map { it.lowercase(Locale.ROOT) }
 
-        fun Double.isValidLat() = this in -90.0..90.0
-        fun Double.isValidLon() = this in -180.0..180.0
-
-        fun parseTimeToSecondsSafe(time: String): Double? {
-            val t = time.trim()
-            val parts = t.split(":")
-            return try {
-                when (parts.size) {
-                    3 -> (parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt()).toDouble()
-                    2 -> (parts[0].toInt() * 60 + parts[1].toInt()).toDouble()
-                    else -> t.toDoubleOrNull()
-                }
-            } catch (_: Exception) {
-                null
-            }
-        }
-
-        fun sanitizeHeading360(deg: Double): Double {
-            var a = deg % 360.0
-            if (a < 0) a += 360.0
-            return a
-        }
-
-
-        val TXT_MIN_DT_SEC = 1.0            // po merge bude typicky 1+ sek
-        val TXT_MAX_STEP_DIST_M = 2000.0    // max skok medzi bodmi (po merge)
-        val TXT_MAX_SPEED_KMH = 350.0       // “rozumné” pre hobby/ultralight
-        val TXT_MAX_VS_MPS = 30.0
-
-
-        val headerTokens = splitLineSmart(lines.first())
-
-        val hasHeader = headerTokens.any { it.equals("Latitude", true) } &&
-                headerTokens.any { it.equals("Longitude", true) }
-
-
-        val idx = mutableMapOf<String, Int>()
-        var startIdx = 0
-
-        fun normHeader(s: String) = s.trim().lowercase(Locale.ROOT)
-
-        if (hasHeader) {
-            headerTokens.forEachIndexed { i, name ->
-                idx[normHeader(name)] = i
-            }
-            startIdx = 1
-        } else {
-
-            idx["time"] = 0
-            idx["latitude"] = 1
-            idx["longitude"] = 2
-
-            idx["altitude (m)"] = 5
-            idx["altitude"] = 5
-            startIdx = 0
-        }
-
-        fun findIndexByPossibleKeys(vararg keys: String): Int? {
-
-            for (k in keys) {
-                val i = idx[normHeader(k)]
-                if (i != null) return i
+        fun idx(vararg keys: String): Int? =
+            keys.firstNotNullOfOrNull { k ->
+                header.indexOfFirst { it == k }.takeIf { it >= 0 }
             }
 
-            if (keys.any { it.contains("altitude", true) }) {
-                val altKey = idx.keys.firstOrNull { it.contains("altitude") }
-                if (altKey != null) return idx[altKey]
+        val iTime = idx("time") ?: return emptyList()
+        val iLat = idx("latitude") ?: return emptyList()
+        val iLon = idx("longitude") ?: return emptyList()
+        val iAlt = idx("altitude", "altitude (m)") ?: return emptyList()
+        val iX = idx("x")
+        val iY = idx("y")
+        val iZ = idx("z")
+
+        data class RawRow(
+            val tSec: Double,
+            val lat: Double,
+            val lon: Double,
+            val alt: Double,
+            val ax: Double?,
+            val ay: Double?,
+            val az: Double?
+        )
+
+        val rows = mutableListOf<RawRow>()
+        var lastBaseSec = Double.NaN
+        var sameSecondCounter = 0
+
+        for (i in 1 until lines.size) {
+            val t = splitLineSmart(lines[i])
+            if (t.size < header.size) continue
+
+            val baseSec = parseHmsToSec(t[iTime]) ?: continue
+            val tSec = if (baseSec == lastBaseSec) {
+                sameSecondCounter++
+                baseSec + sameSecondCounter * 0.1
+            } else {
+                sameSecondCounter = 0
+                baseSec
             }
-            return null
-        }
+            lastBaseSec = baseSec
 
-        fun tok(tokens: List<String>, index: Int?): String? =
-            if (index == null) null else tokens.getOrNull(index)
-
-        val iTime = findIndexByPossibleKeys("Time", "time")
-        val iLat  = findIndexByPossibleKeys("Latitude", "lat", "latitude")
-        val iLon  = findIndexByPossibleKeys("Longitude", "lon", "longitude")
-        val iAlt  = findIndexByPossibleKeys("Altitude (m)", "Altitude", "altitude (m)", "altitude")
-
-
-        data class RawRow(val time: String, val lat: Double, val lon: Double, val alt: Double)
-        val rawRows = mutableListOf<RawRow>()
-
-        for (i in startIdx until lines.size) {
-            val tokens = splitLineSmart(lines[i])
-            if (tokens.size < 3) continue
-
-            val timeStr = tok(tokens, iTime) ?: tokens.firstOrNull() ?: i.toString()
-            val lat = toD(tok(tokens, iLat)) ?: toD(tokens.getOrNull(1))
-            val lon = toD(tok(tokens, iLon)) ?: toD(tokens.getOrNull(2))
-
-
-            val alt = toD(tok(tokens, iAlt)) ?: 0.0
-
-            if (lat == null || lon == null) continue
+            val lat = toD(t[iLat]) ?: continue
+            val lon = toD(t[iLon]) ?: continue
+            val alt = toD(t[iAlt]) ?: continue
             if (!lat.isValidLat() || !lon.isValidLon()) continue
 
-            rawRows += RawRow(timeStr, lat, lon, alt)
-        }
-
-        if (rawRows.size < 2) return emptyList()
-
-
-        val grouped = rawRows.groupBy { it.time.trim() }
-        val orderedTimes = rawRows.map { it.time.trim() }.distinct()
-
-        val merged = orderedTimes.mapNotNull { t ->
-            val rows = grouped[t] ?: return@mapNotNull null
-            val latAvg = rows.map { it.lat }.average()
-            val lonAvg = rows.map { it.lon }.average()
-            val altAvg = rows.map { it.alt }.average()
-
-            FlightPoint(
-                time = t,
-                latitude = latAvg,
-                longitude = lonAvg,
-                altitude = altAvg,
-                heading = 0.0,
-                pitch = 90.0,
-                roll = 0.0,
-                dtSec = Double.NaN,
-                speedKmh = null,
-                vsMps = null,
-                yawDeg = null,
-                timeSource = sk.dubrava.flightvisualizer.data.model.TimeSource.REAL_TIMESTAMP
+            rows += RawRow(
+                tSec = tSec,
+                lat = lat,
+                lon = lon,
+                alt = alt,
+                ax = iX?.let { toD(t[it]) },
+                ay = iY?.let { toD(t[it]) },
+                az = iZ?.let { toD(t[it]) }
             )
         }
 
-        if (merged.size < 2) return merged
+        if (rows.size < 2) return emptyList()
 
+        val out = mutableListOf<FlightPoint>()
+        var lastCourse = 0.0
 
-        val cleaned = mutableListOf<FlightPoint>()
-        cleaned += merged.first()
+        val maxSpeedKmh = 350.0
+        val maxVs = 10.0
 
-        for (i in 1 until merged.size) {
-            val prev = cleaned.last()
-            val cur = merged[i]
-            val dist = distanceMeters(
-                LatLng(prev.latitude, prev.longitude),
-                LatLng(cur.latitude, cur.longitude)
-            )
+        for (i in rows.indices) {
+            val r = rows[i]
 
-            if (dist.isFinite() && dist <= TXT_MAX_STEP_DIST_M) {
-                cleaned += cur
-            } else {
-                Log.w(TAG, "TXT: vyhadzujem bod kvôli skoku ${"%.1f".format(dist)} m (time=${cur.time})")
-            }
-        }
+            val rollDeg = if (r.ay != null && r.az != null) {
+                Math.toDegrees(atan2(r.ay, r.az))
+            } else 0.0
 
-        if (cleaned.size < 2) return cleaned
+            val pitchHud = 90.0
 
-
-        val out = cleaned.mapIndexed { idxPoint, fp ->
-            if (idxPoint == 0) {
-                fp.copy(
+            if (i == 0) {
+                out += FlightPoint(
+                    time = "0",
+                    latitude = r.lat,
+                    longitude = r.lon,
+                    altitude = r.alt,
                     heading = 0.0,
-                    yawDeg = 0.0,
+                    pitch = pitchHud,
+                    roll = rollDeg,
+                    dtSec = Double.NaN,
                     speedKmh = null,
                     vsMps = null,
-                    dtSec = Double.NaN
+                    yawDeg = 0.0,
+                    timeSource = TimeSource.REAL_TIMESTAMP
                 )
-            } else {
-                val prev = cleaned[idxPoint - 1]
-
-                val tPrev = parseTimeToSecondsSafe(prev.time)
-                val tCur = parseTimeToSecondsSafe(fp.time)
-                val dt = if (tPrev != null && tCur != null) (tCur - tPrev) else Double.NaN
-
-                val distM = distanceMeters(
-                    LatLng(prev.latitude, prev.longitude),
-                    LatLng(fp.latitude, fp.longitude)
-                )
-
-                val course = headingDegrees(
-                    LatLng(prev.latitude, prev.longitude),
-                    LatLng(fp.latitude, fp.longitude)
-                )
-
-                val dtOk = dt.isFinite() && dt >= TXT_MIN_DT_SEC
-                val speed = if (dtOk) (distM / dt) * 3.6 else Double.NaN
-                val vs = if (dtOk) (fp.altitude - prev.altitude) / dt else Double.NaN
-
-                val speedOk = speed.isFinite() && speed in 0.0..TXT_MAX_SPEED_KMH
-                val vsOk = vs.isFinite() && kotlin.math.abs(vs) <= TXT_MAX_VS_MPS
-
-                fp.copy(
-                    dtSec = dt,
-                    heading = sanitizeHeading360(course),
-                    yawDeg = sanitizeHeading360(course),
-                    speedKmh = if (speedOk) speed else null,
-                    vsMps = if (vsOk) vs else null
-                )
+                continue
             }
+
+            val prev = rows[i - 1]
+            val prevLL = LatLng(prev.lat, prev.lon)
+            val curLL = LatLng(r.lat, r.lon)
+
+            val distM = distanceMeters(prevLL, curLL)
+            val dt = r.tSec - prev.tSec
+
+            val dtOk = dt.isFinite() && dt >= 0.05
+            val moved = distM >= 3.0
+            val notTeleport = distM <= 80.0
+
+            val course = if (moved && notTeleport) headingDegrees(prevLL, curLL) else lastCourse
+            if (moved && notTeleport) lastCourse = course
+
+            val speedKmhVal = if (dtOk && moved && notTeleport) (distM / dt) * 3.6 else Double.NaN
+            val vs = if (dtOk) (r.alt - prev.alt) / dt else Double.NaN
+
+            out += FlightPoint(
+                time = i.toString(),
+                latitude = r.lat,
+                longitude = r.lon,
+                altitude = r.alt,
+                heading = norm360(course),
+                pitch = pitchHud,
+                roll = rollDeg,
+                dtSec = dt,
+                speedKmh = speedKmhVal.takeIf { it.isFinite() && it in 1.0..maxSpeedKmh },
+                vsMps = vs.takeIf { it.isFinite() && abs(it) <= maxVs },
+                yawDeg = norm360(course),
+                timeSource = TimeSource.REAL_TIMESTAMP
+            )
         }
 
-        Log.i(TAG, "TXT: rawRows=${rawRows.size}, merged=${merged.size}, cleaned=${cleaned.size}")
-
-        // debug: over si, že ALT sedí (prvý/posledný)
-        Log.i(TAG, "TXT first: t=${out.first().time} lat=${out.first().latitude} lon=${out.first().longitude} alt=${out.first().altitude}")
-        Log.i(TAG, "TXT last : t=${out.last().time}  lat=${out.last().latitude}  lon=${out.last().longitude}  alt=${out.last().altitude}")
-
+        Log.i(TAG, "TXT loaded: points=${out.size}, t0=${rows.first().tSec}, t1=${rows.last().tSec}")
         return out
     }
 
-
-
-
-    // -------------------------------------------------------------------------
-    // Distance + headings + smoothing helpers
-    // -------------------------------------------------------------------------
-    private fun distanceMeters(a: LatLng, b: LatLng): Double {
-        val R = 6371000.0
-        val lat1 = Math.toRadians(a.latitude)
-        val lat2 = Math.toRadians(b.latitude)
-        val dLat = lat2 - lat1
-        val dLon = Math.toRadians(b.longitude - a.longitude)
-
-        val sinLat = sin(dLat / 2)
-        val sinLon = sin(dLon / 2)
-
-        val aa = sinLat * sinLat + cos(lat1) * cos(lat2) * sinLon * sinLon
-        val c = 2 * atan2(sqrt(aa), sqrt(1 - aa))
-        return R * c
-    }
-
-    private fun headingDegrees(from: LatLng, to: LatLng): Double {
-        val lat1 = Math.toRadians(from.latitude)
-        val lat2 = Math.toRadians(to.latitude)
-        val dLon = Math.toRadians(to.longitude - from.longitude)
-
-        val y = sin(dLon) * cos(lat2)
-        val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-        var bearing = Math.toDegrees(atan2(y, x))
-        if (bearing < 0) bearing += 360.0
-        return bearing
-    }
-
-    private fun normalizeAngleDeg(angle: Float): Float {
-        var a = angle % 360f
-        if (a < 0f) a += 360f
-        return a
-    }
-
-    private fun smoothAngle(prev: Double, new: Double, alpha: Double = 0.15): Double {
-        var diff = new - prev
-        while (diff > 180.0) diff -= 360.0
-        while (diff < -180.0) diff += 360.0
-        return prev + diff * alpha
-    }
-
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // HUD + 3D update
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun updateUiForIndex(index: Int) {
         if (index !in flightPoints.indices) return
         val fp = flightPoints[index]
@@ -749,7 +621,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         tvAltitude.text = "ALT: ${altM.toInt()} m"
 
-        // surové hodnoty (KML má reálne, TXT má defaulty)
         val rawHeading = fp.heading
         val rawPitch = fp.pitch
         val rawRoll = fp.roll
@@ -761,106 +632,96 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             lastYaw = norm360(rawHeading)
         }
 
-// smoothing
         val headingSmoothed = smoothAngle(lastHeading, rawHeading, 0.15)
         val pitchSmoothed = smoothAngle(lastPitch, rawPitch, 0.15)
         val rollSmoothed = smoothAngle(lastRoll, rawRoll, 0.15)
 
-// !!! FIX: normalizuj po smoothingu, aby HDG nešlo nad 360
         val headingNorm = norm360(headingSmoothed)
         lastHeading = headingNorm
         lastPitch = pitchSmoothed
         lastRoll = rollSmoothed
 
-// kurz po trase (yaw course) – pre KML aj TXT
+        // --- kurz po trase (yaw course) – pre KML aj TXT ---
         val yawCourse = if (index > 0) {
             val prev = flightPoints[index - 1]
             headingDegrees(
                 LatLng(prev.latitude, prev.longitude),
                 LatLng(fp.latitude, fp.longitude)
             )
-        } else headingNorm
+        } else {
+            // pri prvom bode nemáme predchádzajúci smer -> použi heading z dát
+            norm360(rawHeading)
+        }
 
         val yawSmoothed = smoothAngle(lastYaw, yawCourse, 0.20)
         val yawNorm = norm360(yawSmoothed)
         lastYaw = yawNorm
 
-// ----------------------------
-// ODHAD PITCH/ROLL PRE TXT
-// (keď log nemá tilt/roll -> máš 90/0)
-// ----------------------------
+// ✅ ZOBRAZUJ HDG z yawNorm (kurz po trase) – nech sa ti to nebije
+        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", yawNorm)
+
+
+        // ODHAD PITCH/ROLL PRE TXT (keď log nemá tilt/roll -> 90/0)
         val isTxtDefaultAttitude = (fp.pitch == 90.0 && fp.roll == 0.0)
 
         var rollForHud = rollSmoothed
         var pitchForHud = pitchSmoothed
 
         if (isTxtDefaultAttitude) {
-
-            // --- PITCH odhad (ako doteraz) ---
             val vs = fp.vsMps
             val spdHud = fp.speedKmh
             if (vs != null && spdHud != null && spdHud > 1.0) {
                 val v = spdHud / 3.6
                 val gammaDeg = Math.toDegrees(atan2(vs, v))
-                val gammaClamped = clamp(gammaDeg, -20.0, 20.0)
-                pitchForHud = 90.0 + gammaClamped
+                pitchForHud = 90.0 + clamp(gammaDeg, -20.0, 20.0)
             }
 
-            // --- ROLL odhad (opravené): porovnaj kurz (i-2→i-1) vs (i-1→i) ---
-            if (index >= 2) {
-                val p0 = flightPoints[index - 2]
-                val p1 = flightPoints[index - 1]
+            val window = 10
+            if (index >= window + 1) {
+                val p0 = flightPoints[index - window - 1]
+                val p1 = flightPoints[index - window]
                 val p2 = flightPoints[index]
 
-                val t0 = parseTimeToSecondsSafe(p1.time)  // dt medzi p1 a p2
-                val t1 = parseTimeToSecondsSafe(p2.time)
-                val dt = if (t0 != null && t1 != null) (t1 - t0).toDouble() else Double.NaN
+                val coursePrev = headingDegrees(
+                    LatLng(p0.latitude, p0.longitude),
+                    LatLng(p1.latitude, p1.longitude)
+                )
+                val courseNow = headingDegrees(
+                    LatLng(p1.latitude, p1.longitude),
+                    LatLng(p2.latitude, p2.longitude)
+                )
 
-                if (dt.isFinite() && dt >= 0.5) {
+                val dCourseDeg = angleDiffDeg(courseNow, coursePrev)
+                val dt = window.toDouble()
 
-                    val coursePrev = headingDegrees(
-                        LatLng(p0.latitude, p0.longitude),
-                        LatLng(p1.latitude, p1.longitude)
-                    )
-                    val courseNow = headingDegrees(
-                        LatLng(p1.latitude, p1.longitude),
-                        LatLng(p2.latitude, p2.longitude)
-                    )
+                val omega = Math.toRadians(dCourseDeg) / dt
 
-                    val dCourseDeg = angleDiffDeg(courseNow, coursePrev) // -180..180
-                    val omega = Math.toRadians(dCourseDeg) / dt          // rad/s
+                val distM = distanceMeters(
+                    LatLng(p1.latitude, p1.longitude),
+                    LatLng(p2.latitude, p2.longitude)
+                )
+                val v = distM / dt
 
-                    // rýchlosť pre bank odhad: použijeme RAW speed z dist/dt (nezávisle od HUD filtra)
-                    val distM = distanceMeters(
-                        LatLng(p1.latitude, p1.longitude),
-                        LatLng(p2.latitude, p2.longitude)
-                    )
-                    val v = if (distM.isFinite()) distM / dt else 0.0    // m/s
-
-                    // ochrana pred šumom: ak takmer stojí, alebo dCourse extrémne malé -> nechaj 0
-                    if (v > 1.0 && kotlin.math.abs(dCourseDeg) > 0.2) {
-                        val g = 9.80665
-                        val bankRad = atan((v * omega) / g)
-                        val bankDeg = Math.toDegrees(bankRad)
-                        rollForHud = clamp(bankDeg, -60.0, 60.0)
-                    }
+                if (v > 1.0 && abs(dCourseDeg) > 0.05) {
+                    val g = 9.80665
+                    val bankRad = atan((v * omega) / g)
+                    rollForHud = clamp(Math.toDegrees(bankRad), -60.0, 60.0)
                 }
             }
         }
 
-
-// HUD
+        // HUD
         tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", headingNorm)
+        val pitchDegDisplay = pitchForHud - 90.0   // ✅ reálny pitch
+        val rollDegDisplay = rollForHud
 
         tvPitchRoll.text = String.format(
             Locale.ROOT,
             "ROLL: %.1f° | PITCH: %.1f° | YAW: %.1f°",
-            rollForHud,
-            pitchForHud,
-            yawNorm
+            rollDegDisplay, pitchDegDisplay, yawNorm
         )
 
-// SPD / VS
+
         tvSpeed.text = if (fp.speedKmh != null) {
             String.format(Locale.ROOT, "SPD: %.0f km/h", fp.speedKmh)
         } else "SPD: N/A"
@@ -869,49 +730,53 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             String.format(Locale.ROOT, "VS: %.1f m/s", fp.vsMps)
         } else "VS: N/A"
 
-
-        val rollRad = Math.toRadians(rollSmoothed)
+        val rollRad = Math.toRadians(rollForHud)
         val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)
         tvGForce.text = String.format(Locale.ROOT, "G: %.2f", loadFactor)
 
-        // 3D rotation
-        val visualHeading = normalizeAngleDeg(((-headingSmoothed).toFloat() + HEADING_OFFSET_DEG))
+        // 3D rotation (yaw ber z trasy)
+        val visualHeading = normalizeAngleDeg((-yawNorm).toFloat())
 
-        val pitchPhysical = pitchForHud.toFloat() - 90f
-        val rollPhysical = rollForHud.toFloat()
+// ✅ keď je HUD pitch 0° = rovno, tak NEODČÍTAVAJ 90°
+        val pitchDeg = (-pitchForHud).toFloat()   // sign si prípadne otočíme
+        val rollDeg  = (rollForHud).toFloat()
 
-        val pitchVisual = -pitchPhysical
-
-        val rollVisual = rollSmoothed.toFloat()
-
-        // scale podľa ΔALT
-        val altDelta = altM - lastAltitudeM
-        lastAltitudeM = altM
-
-        val climbFactor = (altDelta / ALT_DELTA_MAX_M)
-            .coerceIn(-1.0, 1.0)
-            .toFloat()
-
-        val targetScale = BASE_MODEL_SCALE * (1f + climbFactor * SCALE_EFFECT)
-        val smoothedScale = (lastScale + (targetScale - lastScale) * SCALE_SMOOTH_ALPHA).toFloat()
-        lastScale = smoothedScale.toDouble()
-
-        planeNode?.scale = Scale(smoothedScale)
-
-        planeNode?.rotation = Rotation(
-            x = PLANE_BASE_ROTATION.x + rollVisual,
-            y = pitchVisual,
+        val finalRotation = Rotation(
+            x = rollDeg,
+            y = pitchDeg,
             z = visualHeading
         )
+
+// scale (nechávam tvoje)
+        val finalScale: Scale = if (vehicleType == VEHICLE_DRONE) {
+            Scale(DRONE_SCALE)   // alebo tvoja hodnota
+        } else {
+            // tvoj výpočet scale podľa ALT
+            val altDelta = altM - lastAltitudeM
+            lastAltitudeM = altM
+
+            val climbFactor = (altDelta / ALT_DELTA_MAX_M).coerceIn(-1.0, 1.0).toFloat()
+            val targetScale = BASE_MODEL_SCALE * (1f + climbFactor * SCALE_EFFECT)
+            val smoothedScale = (lastScale + (targetScale - lastScale) * SCALE_SMOOTH_ALPHA).toFloat()
+            lastScale = smoothedScale.toDouble()
+
+            Scale(smoothedScale)
+        }
+
+        if (!modelReady) {
+            pendingRotation = finalRotation
+        } else {
+            planeNode?.rotation = finalRotation
+        }
+
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // Frame update
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun showFrame(index: Int) {
         if (routeLatLng.isEmpty()) return
         if (index !in routeLatLng.indices) return
-        if (index !in flightPoints.indices) return
 
         val point = routeLatLng[index]
         googleMap?.moveCamera(CameraUpdateFactory.newLatLng(point))
@@ -921,17 +786,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         playbackSeekBar.progress = index
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // Playback
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun startPlayback() {
         if (routeLatLng.isEmpty()) return
         if (isPlaying) return
-
-        if (!planeVisible) {
-            planeNode?.isVisible = true
-            planeVisible = true
-        }
 
         isPlaying = true
         btnPlay.text = "Pause"
@@ -992,9 +852,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         Toast.makeText(this, "Rýchlosť prehrávania: $label", Toast.LENGTH_SHORT).show()
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // Polyline
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun drawRoute(points: List<LatLng>) {
         val map = googleMap ?: return
         if (points.size < 2) return
@@ -1007,9 +867,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         map.addPolyline(polylineOptions)
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // Map type bottom sheet
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun showMapTypeBottomSheet() {
         val dialog = BottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.map_type_bottom_sheet, null)
@@ -1035,27 +895,25 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         dialog.show()
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // Google Play Services
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun checkGooglePlayServices(): Boolean {
         val api = GoogleApiAvailability.getInstance()
         val result = api.isGooglePlayServicesAvailable(this)
 
         return if (result == ConnectionResult.SUCCESS) {
-            Log.i(TAG, "✔️ Google Play Services OK")
             true
         } else {
             val message = api.getErrorString(result)
-            Log.e(TAG, "❌ Google Play Services error: $message")
             Toast.makeText(this, "Chyba Google Play Services: $message", Toast.LENGTH_LONG).show()
             false
         }
     }
 
-    // -------------------------------------------------------------------------
+    // -----------------------------
     // 3D setup
-    // -------------------------------------------------------------------------
+    // -----------------------------
     private fun setup3DScene() {
         planeView = findViewById(R.id.planeView)
 
@@ -1073,37 +931,60 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             view.blendMode = View.BlendMode.TRANSLUCENT
 
-            cameraNode.position = Position(0f, 0f, 4.0f)
-            cameraNode.rotation = Rotation(0f, 0f, 0f)
+            // Jednotný default pohľad “zhora” (jemne šikmo)
+            cameraNode.position = Position(0f, 6.0f, 0f)
+            cameraNode.rotation = Rotation(-90f, 0f, 0f)
 
             setOnTouchListener { _, _ -> true }
         }
 
+        modelReady = false
+        pendingRotation = null
+        pendingScale = null
+
+        val isDrone = (vehicleType == VEHICLE_DRONE)
+        val modelPath = if (isDrone) "models/drone.glb" else "models/airplane_lowpoly_final.glb"
+
+        // Blender je autorita → základ 0,0,0
+        val baseRotation = Rotation(0f, 0f, 0f)
+        val basePos = Position(0f, 0f, 0f)
+
+        val startScale = if (isDrone) DRONE_SCALE else BASE_MODEL_SCALE
+
         planeNode = ModelNode(
-            position = Position(0f, -0.02f, 0f),
-            rotation = PLANE_BASE_ROTATION,
-            scale = Scale(BASE_MODEL_SCALE)
+            position = basePos,
+            rotation = baseRotation,
+            scale = Scale(startScale)
         ).apply {
-            isVisible = true
+            isVisible = false
         }
 
-        planeVisible = true
-        lastScale = BASE_MODEL_SCALE.toDouble()
+        lastScale = startScale.toDouble()
 
         planeView.addChild(planeNode!!)
 
         planeNode!!.loadModelAsync(
             context = this,
             lifecycle = lifecycle,
-            glbFileLocation = "models/airplane_lowpoly_final.glb",
-            onLoaded = { Log.i(TAG, "✔️ 3D model načítaný") },
+            glbFileLocation = modelPath,
+            onLoaded = {
+                modelReady = true
+
+                // aplikuj “prvý frame”, ak showFrame(0) už prebehol
+                pendingScale?.let { planeNode?.scale = it }
+                pendingRotation?.let { planeNode?.rotation = it }
+
+                planeNode?.isVisible = true
+                Log.i(TAG, "✔️ 3D model načítaný: $modelPath")
+            },
             onError = { e ->
-                Log.e(TAG, "Chyba pri načítaní 3D modelu", e)
+                Log.e(TAG, "Chyba pri načítaní 3D modelu: $modelPath", e)
                 Toast.makeText(this, "Chyba modelu: ${e.message}", Toast.LENGTH_LONG).show()
             }
         )
     }
 }
+
 
 
 
