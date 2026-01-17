@@ -503,16 +503,17 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 header.indexOfFirst { it == k }.takeIf { it >= 0 }
             }
 
-        // povinné
-        val iTime = idx("time", "time_ms", "timestamp") ?: return emptyList()
-        val iLat  = idx("latitude", "lat", "lat_deg") ?: return emptyList()
-        val iLon  = idx("longitude", "lon", "lon_deg") ?: return emptyList()
-        val iAlt  = idx("altitude", "altitude (m)", "alt_m", "alt") ?: return emptyList()
 
-        // voliteľné (MSFS)
+        val iTime = idx("time", "time_ms", "timestamp", "t_s") ?: return emptyList()
+        val iLat  = idx("latitude", "lat", "lat_deg") ?: return emptyList()
+        val iLon  = idx("longitude", "lon", "lon_deg", "lng") ?: return emptyList()
+        val iAlt  = idx("altitude", "altitude (m)", "alt_m", "alt", "height", "height(m)") ?: return emptyList()
+        val iSpd = idx("speed_mps", "groundspeed_mps", "spd_mps", "speed", "vel_mps")
+        val iVs  = idx("vspeed_mps", "verticalspeed_mps", "vs_mps", "v_speed_mps", "climb_mps")
         val iPitch = idx("pitch", "pitch_deg")
         val iRoll  = idx("roll", "roll_deg", "bank", "bank_deg")
         val iYaw   = idx("yaw", "yaw_deg", "heading", "heading_deg", "true_heading")
+
 
         // voliteľné (Arduino accel)
         val iX = idx("x")
@@ -527,10 +528,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val pitchDeg: Double?,
             val rollDeg: Double?,
             val yawDeg: Double?,
+            val spdMps: Double?,
+            val vsMps: Double?,
             val ax: Double?,
             val ay: Double?,
             val az: Double?
         )
+
 
         val rows = mutableListOf<RawRow>()
         var lastBaseSec = Double.NaN
@@ -556,6 +560,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val lon = toD(parts[iLon]) ?: continue
             val alt = toD(parts[iAlt]) ?: continue
             if (!lat.isValidLat() || !lon.isValidLon()) continue
+            val spdFromFile = iSpd?.takeIf { it < parts.size }?.let { toD(parts[it]) }
+            val vsFromFile  = iVs?.takeIf { it < parts.size }?.let { toD(parts[it]) }
+
 
             val pitchFromFile = iPitch?.takeIf { it < parts.size }?.let { toD(parts[it]) }
             val rollFromFile  = iRoll?.takeIf { it < parts.size }?.let { toD(parts[it]) }
@@ -566,6 +573,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 lat = lat,
                 lon = lon,
                 alt = alt,
+                spdMps = spdFromFile,
+                vsMps  = vsFromFile,
                 pitchDeg = pitchFromFile,
                 rollDeg = rollFromFile,
                 yawDeg = yawFromFile,
@@ -592,7 +601,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 else -> 0.0
             }
 
-            val pitchHud = r.pitchDeg ?: 90.0
+            val pitchHud = r.pitchDeg ?: 0.0
 
             if (i == 0) {
                 val heading0 = r.yawDeg?.let { norm360(it) } ?: 0.0
@@ -630,6 +639,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val speedKmhVal = if (dtOk && moved && notTeleport) (distM / dt) * 3.6 else Double.NaN
             val vs = if (dtOk) (r.alt - prev.alt) / dt else Double.NaN
 
+            val speedKmhFromFile = r.spdMps?.takeIf { it.isFinite() && it >= 0.0 }?.times(3.6)
+            val vsFromFile = r.vsMps?.takeIf { it.isFinite() }
+
+            val speedKmhFinal = speedKmhFromFile
+                ?: speedKmhVal.takeIf { it.isFinite() && it in 1.0..maxSpeedKmh }
+
+            val vsFinal = vsFromFile
+                ?: vs.takeIf { it.isFinite() && abs(it) <= maxVs }
+
+
             // Ak máš yaw v súbore (MSFS), použi ho ako primárny heading
             val headingVal = r.yawDeg?.let { norm360(it) } ?: norm360(course)
 
@@ -642,8 +661,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 pitch = pitchHud,
                 roll = rollDeg,
                 dtSec = dt,
-                speedKmh = speedKmhVal.takeIf { it.isFinite() && it in 1.0..maxSpeedKmh },
-                vsMps = vs.takeIf { it.isFinite() && abs(it) <= maxVs },
+                speedKmh = speedKmhFinal,
+                vsMps = vsFinal,
                 yawDeg = headingVal,
                 timeSource = TimeSource.REAL_TIMESTAMP
             )
@@ -690,16 +709,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         lastRoll = rollSmoothed
 
         // --- kurz po trase (yaw course) – pre KML aj TXT ---
-        val yawCourse = if (index > 0) {
+        val yawCourse = fp.yawDeg?.takeIf { it.isFinite() } ?: if (index > 0) {
             val prev = flightPoints[index - 1]
             headingDegrees(
                 LatLng(prev.latitude, prev.longitude),
                 LatLng(fp.latitude, fp.longitude)
             )
         } else {
-            // pri prvom bode nemáme predchádzajúci smer -> použi heading z dát
             norm360(rawHeading)
         }
+
 
         val yawSmoothed = smoothAngle(lastYaw, yawCourse, 0.20)
         val yawNorm = norm360(yawSmoothed)
