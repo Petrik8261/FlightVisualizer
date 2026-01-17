@@ -51,12 +51,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         private const val TAIL_FORWARD_FIX_ENABLED = true
 
+        private const val DEBUG_AXIS_TEST = false
+
+
         // --- MODEL AXIS TUNING (SceneView: X=right, Y=up, Z=forward) ---
-        private const val YAW_OFFSET_DEG = 0f      // ak bude nos o 90/180° mimo, sem dáš 90f alebo 180f
+        private const val YAW_OFFSET_DEG = 180f      // ak bude nos o 90/180° mimo, sem dáš 90f alebo 180f
         private const val YAW_SIGN = 1f            // ak sa točí opačne, daj -1f
 
         private const val PITCH_SIGN = 1f          // ak pitch ide opačne, daj -1f
         private const val ROLL_SIGN = 1f           // ak roll ide opačne, daj -1f
+        private val BASE_ROTATION = Rotation(
+            x = 0f,   // narovná model (Blender Z-up → SceneView Y-up)
+            y = 180f,  // otočí “dopredu/dozadu”
+            z = 0f
+        )
 
 
         // scale efekt podľa zmeny ALT (pre lietadlo)
@@ -204,7 +212,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         tvPitchRoll = findViewById(R.id.tvPitchRoll)
         tvVerticalSpeed = findViewById(R.id.tvVerticalSpeed)
         tvHeading = findViewById(R.id.tvHeading)
-        tvGForce = findViewById(R.id.tvGForce)
 
         planeView = findViewById(R.id.planeView)
         setup3DScene()
@@ -457,6 +464,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         fun splitLineSmart(line: String): List<String> =
             when {
                 line.contains("\t") -> line.split(Regex("\t+"))
+                line.contains(";") -> line.split(";")
                 line.contains(",") -> line.split(",")
                 else -> line.split(Regex("\\s+"))
             }.map { it.trim() }
@@ -475,17 +483,38 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             return (h * 3600 + m * 60 + sec).toDouble()
         }
 
-        val header = splitLineSmart(lines.first()).map { it.lowercase(Locale.ROOT) }
+        fun parseTimeToSec(s: String): Double? {
+            val v = s.trim()
+            return if (v.contains(":")) {
+                parseHmsToSec(v)
+            } else {
+                // MSFS: time_ms (typicky) -> sekundy
+                v.replace(",", ".").toDoubleOrNull()?.let { msOrSec ->
+                    if (msOrSec > 10_000.0) msOrSec / 1000.0 else msOrSec
+                }
+            }
+        }
+
+        val header = splitLineSmart(lines.first())
+            .map { it.removePrefix("\uFEFF").lowercase(Locale.ROOT) }
 
         fun idx(vararg keys: String): Int? =
             keys.firstNotNullOfOrNull { k ->
                 header.indexOfFirst { it == k }.takeIf { it >= 0 }
             }
 
-        val iTime = idx("time") ?: return emptyList()
-        val iLat = idx("latitude") ?: return emptyList()
-        val iLon = idx("longitude") ?: return emptyList()
-        val iAlt = idx("altitude", "altitude (m)") ?: return emptyList()
+        // povinné
+        val iTime = idx("time", "time_ms", "timestamp") ?: return emptyList()
+        val iLat  = idx("latitude", "lat", "lat_deg") ?: return emptyList()
+        val iLon  = idx("longitude", "lon", "lon_deg") ?: return emptyList()
+        val iAlt  = idx("altitude", "altitude (m)", "alt_m", "alt") ?: return emptyList()
+
+        // voliteľné (MSFS)
+        val iPitch = idx("pitch", "pitch_deg")
+        val iRoll  = idx("roll", "roll_deg", "bank", "bank_deg")
+        val iYaw   = idx("yaw", "yaw_deg", "heading", "heading_deg", "true_heading")
+
+        // voliteľné (Arduino accel)
         val iX = idx("x")
         val iY = idx("y")
         val iZ = idx("z")
@@ -495,6 +524,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val lat: Double,
             val lon: Double,
             val alt: Double,
+            val pitchDeg: Double?,
+            val rollDeg: Double?,
+            val yawDeg: Double?,
             val ax: Double?,
             val ay: Double?,
             val az: Double?
@@ -505,10 +537,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         var sameSecondCounter = 0
 
         for (i in 1 until lines.size) {
-            val t = splitLineSmart(lines[i])
-            if (t.size < header.size) continue
+            val parts = splitLineSmart(lines[i])
 
-            val baseSec = parseHmsToSec(t[iTime]) ?: continue
+            // nech je tolerantný: niekedy býva v dátach menej stĺpcov než v headeri
+            if (parts.size <= maxOf(iTime, iLat, iLon, iAlt)) continue
+
+            val baseSec = parseTimeToSec(parts[iTime]) ?: continue
             val tSec = if (baseSec == lastBaseSec) {
                 sameSecondCounter++
                 baseSec + sameSecondCounter * 0.1
@@ -518,19 +552,26 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             lastBaseSec = baseSec
 
-            val lat = toD(t[iLat]) ?: continue
-            val lon = toD(t[iLon]) ?: continue
-            val alt = toD(t[iAlt]) ?: continue
+            val lat = toD(parts[iLat]) ?: continue
+            val lon = toD(parts[iLon]) ?: continue
+            val alt = toD(parts[iAlt]) ?: continue
             if (!lat.isValidLat() || !lon.isValidLon()) continue
+
+            val pitchFromFile = iPitch?.takeIf { it < parts.size }?.let { toD(parts[it]) }
+            val rollFromFile  = iRoll?.takeIf { it < parts.size }?.let { toD(parts[it]) }
+            val yawFromFile   = iYaw?.takeIf { it < parts.size }?.let { toD(parts[it]) }
 
             rows += RawRow(
                 tSec = tSec,
                 lat = lat,
                 lon = lon,
                 alt = alt,
-                ax = iX?.let { toD(t[it]) },
-                ay = iY?.let { toD(t[it]) },
-                az = iZ?.let { toD(t[it]) }
+                pitchDeg = pitchFromFile,
+                rollDeg = rollFromFile,
+                yawDeg = yawFromFile,
+                ax = iX?.takeIf { it < parts.size }?.let { toD(parts[it]) },
+                ay = iY?.takeIf { it < parts.size }?.let { toD(parts[it]) },
+                az = iZ?.takeIf { it < parts.size }?.let { toD(parts[it]) }
             )
         }
 
@@ -545,25 +586,28 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         for (i in rows.indices) {
             val r = rows[i]
 
-            val rollDeg = if (r.ay != null && r.az != null) {
-                Math.toDegrees(atan2(r.ay, r.az))
-            } else 0.0
+            val rollDeg = when {
+                r.rollDeg != null -> r.rollDeg
+                (r.ay != null && r.az != null) -> Math.toDegrees(atan2(r.ay, r.az))
+                else -> 0.0
+            }
 
-            val pitchHud = 90.0
+            val pitchHud = r.pitchDeg ?: 90.0
 
             if (i == 0) {
+                val heading0 = r.yawDeg?.let { norm360(it) } ?: 0.0
                 out += FlightPoint(
                     time = "0",
                     latitude = r.lat,
                     longitude = r.lon,
                     altitude = r.alt,
-                    heading = 0.0,
+                    heading = heading0,
                     pitch = pitchHud,
                     roll = rollDeg,
                     dtSec = Double.NaN,
                     speedKmh = null,
                     vsMps = null,
-                    yawDeg = 0.0,
+                    yawDeg = heading0,
                     timeSource = TimeSource.REAL_TIMESTAMP
                 )
                 continue
@@ -586,25 +630,29 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val speedKmhVal = if (dtOk && moved && notTeleport) (distM / dt) * 3.6 else Double.NaN
             val vs = if (dtOk) (r.alt - prev.alt) / dt else Double.NaN
 
+            // Ak máš yaw v súbore (MSFS), použi ho ako primárny heading
+            val headingVal = r.yawDeg?.let { norm360(it) } ?: norm360(course)
+
             out += FlightPoint(
                 time = i.toString(),
                 latitude = r.lat,
                 longitude = r.lon,
                 altitude = r.alt,
-                heading = norm360(course),
+                heading = headingVal,
                 pitch = pitchHud,
                 roll = rollDeg,
                 dtSec = dt,
                 speedKmh = speedKmhVal.takeIf { it.isFinite() && it in 1.0..maxSpeedKmh },
                 vsMps = vs.takeIf { it.isFinite() && abs(it) <= maxVs },
-                yawDeg = norm360(course),
+                yawDeg = headingVal,
                 timeSource = TimeSource.REAL_TIMESTAMP
             )
         }
 
-        Log.i(TAG, "TXT loaded: points=${out.size}, t0=${rows.first().tSec}, t1=${rows.last().tSec}")
+        Log.i(TAG, "TXT/CSV loaded: points=${out.size}, t0=${rows.first().tSec}, t1=${rows.last().tSec}, header=${header.joinToString("|")}")
         return out
     }
+
 
     // -----------------------------
     // HUD + 3D update
@@ -657,8 +705,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val yawNorm = norm360(yawSmoothed)
         lastYaw = yawNorm
 
-// ✅ ZOBRAZUJ HDG z yawNorm (kurz po trase) – nech sa ti to nebije
-        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", yawNorm)
+
 
 
         // ODHAD PITCH/ROLL PRE TXT (keď log nemá tilt/roll -> 90/0)
@@ -711,9 +758,24 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         // HUD
-        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", headingNorm)
-        val pitchDegDisplay = pitchForHud - 90.0   // ✅ reálny pitch
-        val rollDegDisplay = rollForHud
+        // ✅ ZOBRAZUJ HDG z yawNorm (kurz po trase) – nech sa ti to nebije
+        tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", yawNorm)
+
+        val pitchDegDisplayRaw = if (isTxtDefaultAttitude) {
+            // TXT fallback má u teba 90 = "rovno"
+            pitchForHud - 90.0
+        } else {
+            // MSFS (a iné CSV) už majú reálny pitch
+            pitchSmoothed
+        }
+
+        val rollDegDisplayRaw = if (isTxtDefaultAttitude) {
+            rollForHud
+        } else {
+            rollSmoothed
+        }
+        val pitchDegDisplay = -pitchDegDisplayRaw
+        val rollDegDisplay  = -rollDegDisplayRaw
 
         tvPitchRoll.text = String.format(
             Locale.ROOT,
@@ -730,22 +792,28 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             String.format(Locale.ROOT, "VS: %.1f m/s", fp.vsMps)
         } else "VS: N/A"
 
-        val rollRad = Math.toRadians(rollForHud)
-        val loadFactor = 1.0 / cos(rollRad).coerceAtLeast(0.01)
-        tvGForce.text = String.format(Locale.ROOT, "G: %.2f", loadFactor)
 
-        // 3D rotation (yaw ber z trasy)
-        val visualHeading = normalizeAngleDeg((-yawNorm).toFloat())
+        // ------------------
+// 3D ROTATION (SceneView: X=right, Y=up, Z=forward)
+// Použi "reálny" pitch z HUD (pitchForHud - 90), roll priamo, yaw z heading/yawNorm
+// ------------------
 
-// ✅ keď je HUD pitch 0° = rovno, tak NEODČÍTAVAJ 90°
-        val pitchDeg = (-pitchForHud).toFloat()   // sign si prípadne otočíme
-        val rollDeg  = (rollForHud).toFloat()
+        val yawDeg3d   = (YAW_SIGN * (yawNorm + YAW_OFFSET_DEG)).toFloat()
+        val pitchDeg3d = (PITCH_SIGN * pitchSmoothed).toFloat()
+        val rollDeg3d  = (ROLL_SIGN * rollSmoothed).toFloat()
 
-        val finalRotation = Rotation(
-            x = rollDeg,
-            y = pitchDeg,
-            z = visualHeading
-        )
+// Základný fix modelu (Blender -> SceneView) + potom dynamická rotácia
+        val finalRotation =
+            BASE_ROTATION +
+                    Rotation(
+                        x = pitchDeg3d,   // PITCH okolo X
+                        y = -yawDeg3d,    // YAW okolo Y (mínus je často nutný v SceneView)
+                        z = -rollDeg3d    // ROLL okolo Z (mínus kvôli orientácii)
+                    )
+        if (!modelReady) pendingRotation = finalRotation
+        else planeNode?.rotation = finalRotation
+
+
 
 // scale (nechávam tvoje)
         val finalScale: Scale = if (vehicleType == VEHICLE_DRONE) {
@@ -970,9 +1038,22 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             onLoaded = {
                 modelReady = true
 
+                // STAV 0 - žiadne dáta
+                planeNode?.rotation = Rotation(0f, 0f, 0f)
+
+                if (DEBUG_AXIS_TEST) {
+                    // TEST 1: "yaw" (otočenie v pôdoryse)
+                    // očakávanie: nos sa otočí doprava/ľava v rovine mapy
+                    planeNode?.rotation = Rotation(0f, 0f, 90f)
+
+                    // Ak chceš, môžeš skúsiť aj tieto 2 ďalšie ručne po jednom:
+                    // planeNode?.rotation = Rotation(90f, 0f, 0f)  // TEST 2: roll?
+                    // planeNode?.rotation = Rotation(0f, 90f, 0f)  // TEST 3: pitch?
+                }
+
                 // aplikuj “prvý frame”, ak showFrame(0) už prebehol
-                pendingScale?.let { planeNode?.scale = it }
-                pendingRotation?.let { planeNode?.rotation = it }
+                //pendingScale?.let { planeNode?.scale = it }
+                //pendingRotation?.let { planeNode?.rotation = it }
 
                 planeNode?.isVisible = true
                 Log.i(TAG, "✔️ 3D model načítaný: $modelPath")

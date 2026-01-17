@@ -183,16 +183,7 @@
                 android:textColor="#A0FF00"
                 android:textSize="12sp" />
 
-            <TextView
-                android:id="@+id/tvGForce"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="G: 1.0"
-                android:textColor="#A0FF00"
-                android:textStyle="bold"
-                android:gravity="end"
-                android:textSize="12sp" />
+
         </LinearLayout>
 
     </LinearLayout>
