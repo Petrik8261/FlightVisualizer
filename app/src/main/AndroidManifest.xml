@@ -18,7 +18,6 @@
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         tools:targetApi="31">
 
-        <!-- ✅ JEDINÝ LAUNCHER -->
         <activity
             android:name=".ui.start.StartActivity"
             android:exported="true">
@@ -27,12 +26,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Import – volaná až z MainActivity -->
         <activity
             android:name=".ui.importdata.ImportActivity"
-            android:exported="false" /> <!-- Hlavná obrazovka prehrávania -->
-
+            android:exported="false" />
         <activity
             android:name=".ui.main.MainActivity"
             android:exported="false" />

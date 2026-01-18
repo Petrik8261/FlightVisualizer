@@ -5,9 +5,8 @@ import android.os.Bundle
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
 import sk.dubrava.flightvisualizer.R
+import sk.dubrava.flightvisualizer.core.AppNav
 import sk.dubrava.flightvisualizer.ui.importdata.ImportActivity
-import sk.dubrava.flightvisualizer.ui.main.MainActivity
-
 
 class StartActivity : AppCompatActivity() {
 
@@ -18,18 +17,13 @@ class StartActivity : AppCompatActivity() {
         val btnDrone = findViewById<Button>(R.id.btnDrone)
         val btnPlane = findViewById<Button>(R.id.btnPlane)
 
-        btnDrone.setOnClickListener { openImport(MainActivity.VEHICLE_DRONE) }
-        btnPlane.setOnClickListener { openImport(MainActivity.VEHICLE_PLANE) }
-
-
+        btnDrone.setOnClickListener { openImport(AppNav.VEHICLE_DRONE) }
+        btnPlane.setOnClickListener { openImport(AppNav.VEHICLE_PLANE) }
     }
 
     private fun openImport(vehicleType: String) {
-        val intent = Intent(this, ImportActivity::class.java).apply {
-            putExtra(MainActivity.EXTRA_VEHICLE_TYPE, vehicleType)
-        }
-        startActivity(intent)
+        startActivity(Intent(this, ImportActivity::class.java).apply {
+            putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
+        })
     }
-
-
 }

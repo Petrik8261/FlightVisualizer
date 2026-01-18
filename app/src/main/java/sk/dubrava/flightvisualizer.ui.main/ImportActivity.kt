@@ -11,7 +11,9 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import sk.dubrava.flightvisualizer.R
+import sk.dubrava.flightvisualizer.core.AppNav
 import sk.dubrava.flightvisualizer.ui.main.MainActivity
+import java.util.Locale
 
 class ImportActivity : AppCompatActivity() {
 
@@ -33,8 +35,7 @@ class ImportActivity : AppCompatActivity() {
     ) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
 
-        selectedUri = uri
-
+        // Persistable permission (read)
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
@@ -42,11 +43,22 @@ class ImportActivity : AppCompatActivity() {
             )
         } catch (e: SecurityException) {
             Log.w(TAG, "takePersistableUriPermission failed: ${e.message}")
+            // nie je to fatálne - niektorí provideri to nepodporujú
         }
 
-        val name = guessDisplayName(uri) ?: uri.toString()
-        tvSelectedFile.text = name
+        val displayName = guessDisplayName(uri) ?: uri.toString()
+        val ok = isSupportedFile(displayName)
 
+        if (!ok) {
+            selectedUri = null
+            tvSelectedFile.text = "(nepodporovaný súbor)"
+            setPlayerButtonEnabled(false)
+            Toast.makeText(this, "Podporované súbory: .kml, .txt, .csv", Toast.LENGTH_LONG).show()
+            return@registerForActivityResult
+        }
+
+        selectedUri = uri
+        tvSelectedFile.text = displayName
         setPlayerButtonEnabled(true)
     }
 
@@ -55,8 +67,7 @@ class ImportActivity : AppCompatActivity() {
         setContentView(R.layout.activity_import)
 
         // príde zo StartActivity
-        vehicleType = intent.getStringExtra(MainActivity.EXTRA_VEHICLE_TYPE)
-            ?: MainActivity.VEHICLE_PLANE
+        vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
 
         btnPickFile = findViewById(R.id.btnPickFile)
         btnOpenPlayer = findViewById(R.id.btnOpenPlayer)
@@ -67,7 +78,16 @@ class ImportActivity : AppCompatActivity() {
         tvSelectedFile.text = "(žiadny)"
 
         btnPickFile.setOnClickListener {
-            pickFileLauncher.launch(arrayOf("*/*"))
+            // MIME filter (nie je vždy 100% spoľahlivý, preto ešte validujeme príponu)
+            pickFileLauncher.launch(
+                arrayOf(
+                    "application/vnd.google-earth.kml+xml", // .kml
+                    "text/plain",                           // .txt
+                    "text/csv",                             // .csv
+                    "application/csv",
+                    "*/*"                                   // fallback pre providerov čo nepoznajú MIME
+                )
+            )
         }
 
         btnClearSelection.setOnClickListener {
@@ -84,10 +104,14 @@ class ImportActivity : AppCompatActivity() {
             }
 
             val i = Intent(this, MainActivity::class.java).apply {
-                putExtra(MainActivity.EXTRA_VEHICLE_TYPE, vehicleType)
-                putExtra(MainActivity.EXTRA_FILE_URI, uri.toString())
+                putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
+                putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(i)
+
+            // ak nechceš návrat späť na Import po Back:
+            // finish()
         }
     }
 
@@ -110,7 +134,13 @@ class ImportActivity : AppCompatActivity() {
             null
         }
     }
+
+    private fun isSupportedFile(nameOrUri: String): Boolean {
+        val s = nameOrUri.lowercase(Locale.ROOT)
+        return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
+    }
 }
+
 
 
 

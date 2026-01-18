@@ -19,6 +19,7 @@ sceneviewAndroid = "0.9.0"
 runtime = "1.0.0-alpha07"
 sceneformBase = "1.17.1"
 activity = "1.9.3"
+navigationCommonAndroid = "2.9.6"
 
 [libraries]
 androidx-constraintlayout-v221 = { module = "androidx.constraintlayout:constraintlayout", version.ref = "androidxConstraintlayout" }
@@ -45,6 +46,7 @@ sceneview-android = { module = "io.github.sceneview:sceneview", version.ref = "s
 androidx-runtime = { group = "androidx.xr.runtime", name = "runtime", version.ref = "runtime" }
 sceneform-base = { group = "com.google.ar.sceneform", name = "sceneform-base", version.ref = "sceneformBase" }
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
+androidx-navigation-common-android = { group = "androidx.navigation", name = "navigation-common-android", version.ref = "navigationCommonAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
