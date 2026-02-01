@@ -19,6 +19,8 @@ class ImportActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "IMPORT"
+        private const val STATE_URI = "state_uri"
+        private const val STATE_VEHICLE = "state_vehicle"
     }
 
     private lateinit var btnPickFile: Button
@@ -29,13 +31,11 @@ class ImportActivity : AppCompatActivity() {
     private lateinit var vehicleType: String
     private var selectedUri: Uri? = null
 
-    // SAF picker
     private val pickFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
 
-        // Persistable permission (read)
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
@@ -43,7 +43,6 @@ class ImportActivity : AppCompatActivity() {
             )
         } catch (e: SecurityException) {
             Log.w(TAG, "takePersistableUriPermission failed: ${e.message}")
-            // nie je to fatálne - niektorí provideri to nepodporujú
         }
 
         val displayName = guessDisplayName(uri) ?: uri.toString()
@@ -66,26 +65,38 @@ class ImportActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_import)
 
-        // príde zo StartActivity
-        vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
+        // 1) obnov stav (ak existuje)
+        if (savedInstanceState != null) {
+            vehicleType = savedInstanceState.getString(STATE_VEHICLE) ?: AppNav.VEHICLE_PLANE
+            selectedUri = savedInstanceState.getString(STATE_URI)?.let { Uri.parse(it) }
+        } else {
+            // 2) prvý štart - z intentu
+            vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
+        }
 
         btnPickFile = findViewById(R.id.btnPickFile)
         btnOpenPlayer = findViewById(R.id.btnOpenPlayer)
         btnClearSelection = findViewById(R.id.btnClearSelection)
         tvSelectedFile = findViewById(R.id.tvSelectedFile)
 
-        setPlayerButtonEnabled(false)
-        tvSelectedFile.text = "(žiadny)"
+        // nastav UI podľa toho, či už máme URI
+        if (selectedUri != null) {
+            val name = guessDisplayName(selectedUri!!) ?: selectedUri.toString()
+            tvSelectedFile.text = name
+            setPlayerButtonEnabled(true)
+        } else {
+            tvSelectedFile.text = "(žiadny)"
+            setPlayerButtonEnabled(false)
+        }
 
         btnPickFile.setOnClickListener {
-            // MIME filter (nie je vždy 100% spoľahlivý, preto ešte validujeme príponu)
             pickFileLauncher.launch(
                 arrayOf(
-                    "application/vnd.google-earth.kml+xml", // .kml
-                    "text/plain",                           // .txt
-                    "text/csv",                             // .csv
+                    "application/vnd.google-earth.kml+xml",
+                    "text/plain",
+                    "text/csv",
                     "application/csv",
-                    "*/*"                                   // fallback pre providerov čo nepoznajú MIME
+                    "*/*"
                 )
             )
         }
@@ -109,10 +120,15 @@ class ImportActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(i)
-
-            // ak nechceš návrat späť na Import po Back:
-            // finish()
         }
+
+        Log.i(TAG, "onCreate saved=${savedInstanceState != null} vehicleType=$vehicleType selectedUri=$selectedUri")
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_VEHICLE, vehicleType)
+        outState.putString(STATE_URI, selectedUri?.toString())
     }
 
     private fun setPlayerButtonEnabled(enabled: Boolean) {
@@ -140,6 +156,7 @@ class ImportActivity : AppCompatActivity() {
         return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
     }
 }
+
 
 
 

@@ -7,11 +7,16 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View as AndroidView
 import android.widget.Button
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.Toolbar
 import com.google.android.filament.View
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
@@ -29,23 +34,18 @@ import io.github.sceneview.math.Position
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.math.Scale
 import io.github.sceneview.node.ModelNode
-import org.w3c.dom.Element
 import sk.dubrava.flightvisualizer.R
 import sk.dubrava.flightvisualizer.core.AppNav
-import sk.dubrava.flightvisualizer.data.model.FlightPoint
-import sk.dubrava.flightvisualizer.data.model.TimeSource
-import java.util.Locale
-import javax.xml.parsers.DocumentBuilderFactory
-import kotlin.math.*
 import sk.dubrava.flightvisualizer.core.FlightHelper
-
+import sk.dubrava.flightvisualizer.data.model.FlightPoint
+import java.util.Locale
+import kotlin.math.*
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     companion object {
         private const val TAG = "MAP_DEBUG"
 
-        private const val TAIL_FORWARD_FIX_ENABLED = true
         private const val DEBUG_AXIS_TEST = false
 
         // --- MODEL AXIS TUNING (SceneView: X=right, Y=up, Z=forward) ---
@@ -61,21 +61,21 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             z = 0f
         )
 
-        // scale efekt podľa zmeny ALT (pre lietadlo)
-        private const val BASE_MODEL_SCALE = 0.03f
+        // --- CAMERA PRESETS ---
+        private const val CAM_TOP_Y = 6.0f
+        private const val CAM_TOP_Z = 0.0f
+        private const val CAM_TOP_PITCH = -90f
+
+        private const val CAM_TILT_Y = 7.5f
+        private const val CAM_TILT_Z = 2.5f
+        private const val CAM_TILT_PITCH = -75f
+
+        // --- SCALE ---
+        private const val BASE_MODEL_SCALE = 0.04f
         private const val SCALE_EFFECT = 0.18f
         private const val SCALE_SMOOTH_ALPHA = 0.18f
         private const val ALT_DELTA_MAX_M = 3.0f
 
-        // --- SANITY / QUALITY THRESHOLDS ---
-        private const val MIN_DT_SEC = 0.05
-        private const val MAX_STEP_DIST_M = 2000.0
-        private const val MAX_SPEED_KMH = 250.0
-        private const val MAX_VS_MPS = 30.0
-
-        private const val ALLOW_ESTIMATED_SPEED_FROM_KML_TOUR = false
-
-        // Drone scale (konštantné)
         private const val DRONE_SCALE = 0.12f
     }
 
@@ -86,12 +86,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var vehicleType: String
     private lateinit var flightHelper: FlightHelper
 
-
-    // --- 3D gating (aby nebol skok) ---
-    private var modelReady = false
-    private var pendingRotation: Rotation? = null
-    private var pendingScale: Scale? = null
-
     private lateinit var playbackSeekBar: SeekBar
     private lateinit var btnPlay: Button
     private lateinit var btnStop: Button
@@ -99,7 +93,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var btnStepBack: Button
     private lateinit var btnStepForward: Button
 
-    // HUD
     private lateinit var tvAltitude: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvPitchRoll: TextView
@@ -109,16 +102,19 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var isPlaying = false
     private var currentIndex = 0
     private val playHandler = Handler(Looper.getMainLooper())
-
     private var playbackSpeed = 2.0
 
     private var flightMarker: Marker? = null
 
-    // --- 3D ---
+    // 3D
     private lateinit var planeView: SceneView
     private var planeNode: ModelNode? = null
 
-    // smoothing stav
+    private var modelReady = false
+    private var pendingRotation: Rotation? = null
+    private var pendingScale: Scale? = null
+
+    // smoothing
     private var lastRoll = 0.0
     private var lastPitch = 0.0
     private var lastHeading = 0.0
@@ -127,8 +123,14 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var lastScale = BASE_MODEL_SCALE.toDouble()
     private var lastAltitudeM = Double.NaN
 
+    private enum class CameraMode { TOP, TILT }
+    private var cameraMode: CameraMode = CameraMode.TOP
+
+    // “anti-crash” prepínač – keď odchádzame, už nič 3D neupdatuje
+    private var isExiting = false
+
     // -----------------------------
-    // Basic helpers
+    // Helpers
     // -----------------------------
     private fun clamp(v: Double, min: Double, max: Double): Double = max(min, min(v, max))
 
@@ -136,13 +138,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         var x = d % 360.0
         if (x < 0) x += 360.0
         return x
-    }
-
-    private fun angleDiffDeg(a: Double, b: Double): Double {
-        var d = a - b
-        while (d > 180.0) d -= 360.0
-        while (d < -180.0) d += 360.0
-        return d
     }
 
     private fun distanceMeters(a: LatLng, b: LatLng): Double {
@@ -179,15 +174,33 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return prev + diff * alpha
     }
 
+    private fun applyCameraMode(mode: CameraMode) {
+        cameraMode = mode
+        val cam = planeView.cameraNode
+        when (mode) {
+            CameraMode.TOP -> {
+                cam.position = Position(0f, CAM_TOP_Y, CAM_TOP_Z)
+                cam.rotation = Rotation(CAM_TOP_PITCH, 0f, 0f)
+            }
+            CameraMode.TILT -> {
+                cam.position = Position(0f, CAM_TILT_Y, CAM_TILT_Z)
+                cam.rotation = Rotation(CAM_TILT_PITCH, 0f, 0f)
+            }
+        }
+    }
+
     // -----------------------------
-    // Android lifecycle
+    // Lifecycle
     // -----------------------------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        val toolbar = findViewById<Toolbar>(R.id.toolbar)
+        setSupportActionBar(toolbar)
+        supportActionBar?.title = ""
+
         flightHelper = FlightHelper(contentResolver)
-
-
         vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
 
         playbackSeekBar = findViewById(R.id.playbackSeekBar)
@@ -205,6 +218,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         planeView = findViewById(R.id.planeView)
         setup3DScene()
+
+        // systémový BACK – nech ide cez safeExit (nie default teardown cestou)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                safeExitToPrevious()
+            }
+        })
 
         btnPlay.setOnClickListener { if (isPlaying) pausePlayback() else startPlayback() }
         btnStop.setOnClickListener { resetPlayback() }
@@ -224,6 +244,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         btnSpeed.setOnClickListener { cyclePlaybackSpeed() }
+        btnSpeed.setOnLongClickListener {
+            val next = if (cameraMode == CameraMode.TOP) CameraMode.TILT else CameraMode.TOP
+            applyCameraMode(next)
+            Toast.makeText(this, "Kamera: ${if (next == CameraMode.TOP) "TOP" else "TILT"}", Toast.LENGTH_SHORT).show()
+            true
+        }
 
         findViewById<FloatingActionButton>(R.id.btnMapType).setOnClickListener {
             showMapTypeBottomSheet()
@@ -242,6 +268,94 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mapFragment.getMapAsync(this)
     }
 
+    override fun onStop() {
+        pausePlayback()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        // NEVOLAJME destroy/removeChild/release – to u teba spúšťa Filament crash.
+        // Len zrušíme callbacky aby nič nebežalo.
+        playHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    // -----------------------------
+    // Menu
+    // -----------------------------
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+
+            R.id.action_back -> {
+                safeExitToPrevious()
+                true
+            }
+
+            R.id.action_home -> {
+                safeGoHomeToImport()
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun beginExitMode() {
+        if (isExiting) return
+        isExiting = true
+
+        pausePlayback()
+        playHandler.removeCallbacksAndMessages(null)
+
+        // “odpoj” 3D tak, aby už nereagovalo, ale NEROB destroy()
+        try {
+            if (::planeView.isInitialized) {
+                planeView.visibility = AndroidView.INVISIBLE
+                // nech nekonzumuje nič (nie je nutné, ale ok)
+                planeView.setOnTouchListener(null)
+            }
+        } catch (_: Exception) {}
+
+        // už len zruš referenciu (GC neskôr)
+        planeNode = null
+        modelReady = false
+        pendingRotation = null
+        pendingScale = null
+    }
+
+    private fun safeExitToPrevious() {
+        beginExitMode()
+        finish()
+        // bez animácie = menšia šanca že EGL/Surface teardown “trafí” bug
+        overridePendingTransition(0, 0)
+    }
+
+    private fun safeGoHomeToImport() {
+        beginExitMode()
+
+        val i = android.content.Intent(
+            this,
+            sk.dubrava.flightvisualizer.ui.importdata.ImportActivity::class.java
+        ).apply {
+            putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
+            addFlags(
+                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        startActivity(i)
+        finish()
+        overridePendingTransition(0, 0)
+    }
+
+    // -----------------------------
+    // Map
+    // -----------------------------
     override fun onMapReady(map: GoogleMap) {
         googleMap = map
         googleMap?.mapType = GoogleMap.MAP_TYPE_SATELLITE
@@ -256,7 +370,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val uri = Uri.parse(uriStr)
         flightPoints = flightHelper.loadFlight(uri)
 
-
         if (flightPoints.size < 2) {
             Toast.makeText(this, "Nepodarilo sa načítať dostatok bodov zo súboru.", Toast.LENGTH_LONG).show()
             finish()
@@ -264,7 +377,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         routeLatLng = flightHelper.buildRoute(flightPoints)
-
 
         playbackSeekBar.max = routeLatLng.size - 1
         playbackSeekBar.progress = 0
@@ -290,15 +402,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         showFrame(0)
     }
 
-
     // -----------------------------
     // HUD + 3D update
     // -----------------------------
     private fun updateUiForIndex(index: Int) {
+        if (isExiting) return
         if (index !in flightPoints.indices) return
-        val fp = flightPoints[index]
 
+        val fp = flightPoints[index]
         val altM = fp.altitude
+
         if (index == 0 || lastAltitudeM.isNaN()) {
             lastAltitudeM = altM
             lastScale = BASE_MODEL_SCALE.toDouble()
@@ -340,61 +453,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val yawNorm = norm360(yawSmoothed)
         lastYaw = yawNorm
 
-        val isTxtDefaultAttitude = (fp.pitch == 90.0 && fp.roll == 0.0)
-
-        var rollForHud = rollSmoothed
-        var pitchForHud = pitchSmoothed
-
-        if (isTxtDefaultAttitude) {
-            val vs = fp.vsMps
-            val spdHud = fp.speedKmh
-            if (vs != null && spdHud != null && spdHud > 1.0) {
-                val v = spdHud / 3.6
-                val gammaDeg = Math.toDegrees(atan2(vs, v))
-                pitchForHud = 90.0 + clamp(gammaDeg, -20.0, 20.0)
-            }
-
-            val window = 10
-            if (index >= window + 1) {
-                val p0 = flightPoints[index - window - 1]
-                val p1 = flightPoints[index - window]
-                val p2 = flightPoints[index]
-
-                val coursePrev = headingDegrees(
-                    LatLng(p0.latitude, p0.longitude),
-                    LatLng(p1.latitude, p1.longitude)
-                )
-                val courseNow = headingDegrees(
-                    LatLng(p1.latitude, p1.longitude),
-                    LatLng(p2.latitude, p2.longitude)
-                )
-
-                val dCourseDeg = angleDiffDeg(courseNow, coursePrev)
-                val dt = window.toDouble()
-
-                val omega = Math.toRadians(dCourseDeg) / dt
-
-                val distM = distanceMeters(
-                    LatLng(p1.latitude, p1.longitude),
-                    LatLng(p2.latitude, p2.longitude)
-                )
-                val v = distM / dt
-
-                if (v > 1.0 && abs(dCourseDeg) > 0.05) {
-                    val g = 9.80665
-                    val bankRad = atan((v * omega) / g)
-                    rollForHud = clamp(Math.toDegrees(bankRad), -60.0, 60.0)
-                }
-            }
-        }
-
         tvHeading.text = String.format(Locale.ROOT, "HDG: %03.0f°", yawNorm)
 
-        val pitchDegDisplayRaw = if (isTxtDefaultAttitude) pitchForHud - 90.0 else pitchSmoothed
-        val rollDegDisplayRaw = if (isTxtDefaultAttitude) rollForHud else rollSmoothed
-
-        val pitchDegDisplay = -pitchDegDisplayRaw
-        val rollDegDisplay  = -rollDegDisplayRaw
+        val pitchDegDisplay = -pitchSmoothed
+        val rollDegDisplay = -rollSmoothed
 
         tvPitchRoll.text = String.format(
             Locale.ROOT,
@@ -410,20 +472,19 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             String.format(Locale.ROOT, "VS: %.1f m/s", fp.vsMps)
         } else "VS: N/A"
 
-        // ------------------
-        // 3D ROTATION + SCALE (jediný blok)
-        // ------------------
-        val yawDeg3d   = (YAW_SIGN * (yawNorm + YAW_OFFSET_DEG)).toFloat()
-        val pitchDeg3d = (PITCH_SIGN * pitchSmoothed).toFloat()
-        val rollDeg3d  = (ROLL_SIGN * rollSmoothed).toFloat()
+        // 3D update (len ak model ready a neodchádzame)
+        if (!modelReady) return
+
+        val yawDeg3d = (YAW_SIGN * (yawNorm + YAW_OFFSET_DEG)).toFloat()
+        val pitchDeg3d = (PITCH_SIGN * (-pitchSmoothed)).toFloat()
+        val rollDeg3d = (ROLL_SIGN * rollSmoothed).toFloat()
 
         val finalRotation =
-            BASE_ROTATION +
-                    Rotation(
-                        x = pitchDeg3d,
-                        y = -yawDeg3d,
-                        z = -rollDeg3d
-                    )
+            BASE_ROTATION + Rotation(
+                x = pitchDeg3d,
+                y = -yawDeg3d,
+                z = rollDeg3d
+            )
 
         val finalScale: Scale = if (vehicleType == AppNav.VEHICLE_DRONE) {
             Scale(DRONE_SCALE)
@@ -435,23 +496,18 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             val targetScale = BASE_MODEL_SCALE * (1f + climbFactor * SCALE_EFFECT)
             val smoothedScale = (lastScale + (targetScale - lastScale) * SCALE_SMOOTH_ALPHA).toFloat()
             lastScale = smoothedScale.toDouble()
-
             Scale(smoothedScale)
         }
 
-        if (!modelReady) {
-            pendingRotation = finalRotation
-            pendingScale = finalScale
-        } else {
-            planeNode?.rotation = finalRotation
-            planeNode?.scale = finalScale
-        }
+        planeNode?.rotation = finalRotation
+        planeNode?.scale = finalScale
     }
 
     // -----------------------------
     // Frame update
     // -----------------------------
     private fun showFrame(index: Int) {
+        if (isExiting) return
         if (routeLatLng.isEmpty()) return
         if (index !in routeLatLng.indices) return
 
@@ -467,6 +523,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // Playback
     // -----------------------------
     private fun startPlayback() {
+        if (isExiting) return
         if (routeLatLng.isEmpty()) return
         if (isPlaying) return
 
@@ -496,6 +553,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private val playStepRunnable = object : Runnable {
         override fun run() {
+            if (isExiting) return
             if (!isPlaying || routeLatLng.isEmpty()) return
 
             if (currentIndex >= routeLatLng.size) {
@@ -592,8 +650,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // 3D setup
     // -----------------------------
     private fun setup3DScene() {
-        planeView = findViewById(R.id.planeView)
-
         planeView.apply {
             setZOrderOnTop(true)
             setBackgroundColor(Color.TRANSPARENT)
@@ -608,9 +664,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             view.blendMode = View.BlendMode.TRANSLUCENT
 
-            cameraNode.position = Position(0f, 6.0f, 0f)
-            cameraNode.rotation = Rotation(-90f, 0f, 0f)
+            applyCameraMode(CameraMode.TOP)
 
+            // blokuj dotyk aby si “neťahal” scenou
             setOnTouchListener { _, _ -> true }
         }
 
@@ -620,18 +676,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         val isDrone = (vehicleType == AppNav.VEHICLE_DRONE)
         val modelPath = if (isDrone) "models/drone.glb" else "models/airplane_lowpoly_final.glb"
-
-        val baseRotation = Rotation(0f, 0f, 0f)
-        val basePos = Position(0f, 0f, 0f)
         val startScale = if (isDrone) DRONE_SCALE else BASE_MODEL_SCALE
 
         planeNode = ModelNode(
-            position = basePos,
-            rotation = baseRotation,
+            position = Position(0f, 0f, 0f),
+            rotation = Rotation(0f, 0f, 0f),
             scale = Scale(startScale)
-        ).apply {
-            isVisible = false
-        }
+        ).apply { isVisible = false }
 
         lastScale = startScale.toDouble()
 
@@ -644,11 +695,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             onLoaded = {
                 modelReady = true
 
-                // aplikuj “prvý frame”, ak showFrame(0) už prebehol
+                // aplikuj pending (ak prišlo skôr než model)
                 pendingScale?.let { planeNode?.scale = it }
                 pendingRotation?.let { planeNode?.rotation = it }
 
-                // fallback (ak ešte neboli dáta)
                 if (pendingRotation == null) {
                     planeNode?.rotation = Rotation(0f, 0f, 0f)
                 }
@@ -667,6 +717,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         )
     }
 }
+
+
+
 
 
 

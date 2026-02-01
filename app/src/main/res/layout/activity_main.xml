@@ -7,33 +7,42 @@
     android:layout_height="match_parent"
     tools:context=".ui.main.MainActivity">
 
-    <!-- MAPA - pozadie na celú obrazovku -->
+    <!-- TOP TOOLBAR (tri bodky menu) -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@android:color/transparent"
+        android:elevation="0dp"
+        app:title=""
+        app:contentInsetStart="0dp"
+        app:contentInsetStartWithNavigation="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- MAPA - pozadie na celú obrazovku (pod toolbarom) -->
     <fragment
         android:id="@+id/mapFragment"
         android:name="com.google.android.gms.maps.SupportMapFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- 3D MODEL – overlay nad mapou -->
+    <!-- 3D MODEL – overlay nad mapou (pod toolbarom) -->
     <io.github.sceneview.SceneView
         android:id="@+id/planeView"
         android:layout_width="240dp"
         android:layout_height="240dp"
         android:elevation="10dp"
         android:background="@android:color/transparent"
-
         app:layout_constraintTop_toTopOf="@id/mapFragment"
         app:layout_constraintBottom_toBottomOf="@id/mapFragment"
         app:layout_constraintStart_toStartOf="@id/mapFragment"
         app:layout_constraintEnd_toEndOf="@id/mapFragment" />
-
-
-
-
 
     <!-- SLIDER -->
     <SeekBar
@@ -95,25 +104,17 @@
                 android:id="@+id/btnStepBack"
                 android:layout_width="60dp"
                 android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
                 android:text="⏮"
-                android:textSize="18sp"
-                app:layout_constraintTop_toTopOf="@+id/btnPlay"
-                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
-                app:layout_constraintEnd_toStartOf="@+id/btnPlay"
-                android:layout_marginEnd="8dp" />
+                android:textSize="18sp" />
 
             <Button
                 android:id="@+id/btnStepForward"
                 android:layout_width="60dp"
                 android:layout_height="40dp"
+                android:layout_marginStart="8dp"
                 android:text="⏭"
-                android:textSize="18sp"
-                app:layout_constraintTop_toTopOf="@+id/btnPlay"
-                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
-                app:layout_constraintStart_toEndOf="@+id/btnPlay"
-                android:layout_marginStart="8dp" />
-
-
+                android:textSize="18sp" />
         </LinearLayout>
 
         <!-- PRVÝ RIADOK HUD: ALT, SPD, VS, HDG -->
@@ -139,7 +140,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="SPD: 0 kt (0 km/h)"
+                android:text="SPD: 0"
                 android:textColor="#A0FF00"
                 android:textStyle="bold"
                 android:textSize="12sp" />
@@ -165,7 +166,7 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- DRUHÝ RIADOK HUD: Roll, Pitch, Yaw, G-force -->
+        <!-- DRUHÝ RIADOK HUD -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -182,8 +183,6 @@
                 android:text="ROLL: 0° | PITCH: 0° | YAW: 0°"
                 android:textColor="#A0FF00"
                 android:textSize="12sp" />
-
-
         </LinearLayout>
 
     </LinearLayout>
@@ -195,18 +194,14 @@
         android:layout_height="wrap_content"
         android:src="@android:drawable/ic_dialog_map"
         android:contentDescription="Typ mapy"
-
         android:layout_margin="16dp"
         android:layout_marginBottom="8dp"
-
         app:tint="@android:color/white"
         app:backgroundTint="@android:color/holo_blue_dark"
-
         app:layout_constraintBottom_toTopOf="@id/infoPanel"
         app:layout_constraintEnd_toEndOf="parent" />
 
-
-
 </androidx.constraintlayout.widget.ConstraintLayout>
+
 
 
