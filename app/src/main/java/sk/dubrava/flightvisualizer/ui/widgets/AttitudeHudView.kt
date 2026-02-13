@@ -11,31 +11,30 @@ class AttitudeHudView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    // --- Inputs (deg / units) ---
+    // --- Inputs ---
     var pitchDeg: Float = 0f
-        set(value) { field = value; invalidate() }
+        set(v) { field = v; invalidate() }
 
     var rollDeg: Float = 0f
-        set(value) { field = value; invalidate() }
+        set(v) { field = v; invalidate() }
 
     var headingDeg: Float = 0f
-        set(value) { field = norm360(value); invalidate() }
+        set(v) { field = norm360(v); invalidate() }
 
-    var speed: Float? = null
-        set(value) { field = value; invalidate() }
+    // Aviation preferred
+    var speedKts: Float? = null
+        set(v) { field = v; invalidate() }
 
-    var altitude: Float? = null
-        set(value) { field = value; invalidate() }
+    var altitudeFt: Float? = null
+        set(v) { field = v; invalidate() }
 
-    var vsMps: Float? = null
-        set(value) { field = value; invalidate() }
+    var vsFpm: Float? = null
+        set(v) { field = v; invalidate() }
 
+    var crsDeg: Float? = null
+        set(v) { field = v; invalidate() }
 
     // --- Style tuning ---
-    private val pitchPxPerDeg: Float get() = height * 0.0095f // ~ dobrý štart
-    private val maxPitchDraw = 45f
-
-    // Paints
     private val pSky = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(18, 95, 190) }
     private val pGround = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(155, 98, 30) }
 
@@ -46,35 +45,15 @@ class AttitudeHudView @JvmOverloads constructor(
     }
 
     private val pRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(180, 255, 255, 255)
+        color = Color.argb(190, 255, 255, 255)
         style = Paint.Style.STROKE
         strokeWidth = dp(2.5f)
     }
 
-    private val pRingTick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 255, 255, 255)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(2f)
-        strokeCap = Paint.Cap.ROUND
-    }
-
-    private val pRingText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(220, 255, 255, 255)
-        textSize = sp(12f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-
-    private val pRingPointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(255, 193, 7) // amber
-        style = Paint.Style.STROKE
-        strokeWidth = dp(4f)
-        strokeCap = Paint.Cap.ROUND
-    }
-
-
     private val pLadder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         strokeWidth = dp(2f)
+        strokeCap = Paint.Cap.ROUND
     }
 
     private val pText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -89,12 +68,6 @@ class AttitudeHudView @JvmOverloads constructor(
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
 
-    private val pFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        strokeWidth = dp(3f)
-        style = Paint.Style.STROKE
-    }
-
     private val pPointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(255, 193, 7) // amber
         strokeWidth = dp(4f)
@@ -102,60 +75,53 @@ class AttitudeHudView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
 
-    private val pPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(170, 0, 0, 0)
-        style = Paint.Style.FILL
+    // Top bar (glass)
+    private val pBarBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(25, 34, 55)
     }
-
-    private val pPanelStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(220, 255, 255, 255)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(4f)
-    }
-
-    private val pValueBox = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val pBarText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-
-    private val pValueText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
         textSize = sp(16f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
+    private val pBarTextDim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(180, 255, 255, 255)
+        textSize = sp(16f)
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    private val pCompassTick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 255, 255, 255)
+        strokeWidth = dp(2f)
+        strokeCap = Paint.Cap.ROUND
+    }
 
+    private val pCompassPointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 193, 7) // amber
+        style = Paint.Style.FILL
+    }
+
+
+    // smoothing
     private var dispRoll = 0f
     private var dispPitch = 0f
     private var lastFrameMs = 0L
 
     private fun smoothToward(current: Float, target: Float, dtSec: Float, tauSec: Float): Float {
-        // 1st order low-pass, tau ~ “inertia”
         val a = 1f - exp(-dtSec / tauSec)
         return current + (target - current) * a
     }
 
-    private fun smoothAngleToward(current: Float, target: Float, dtSec: Float, tauSec: Float): Float {
-        // shortest path for angles
-        var diff = (target - current) % 360f
-        if (diff > 180f) diff -= 360f
-        if (diff < -180f) diff += 360f
-        val a = 1f - exp(-dtSec / tauSec)
-        return current + diff * a
-    }
-
-
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
+        // ===== Smooth gyro-like inertia =====
         val now = android.os.SystemClock.uptimeMillis()
         val dtSec = if (lastFrameMs == 0L) 0f else ((now - lastFrameMs).coerceAtMost(50L)) / 1000f
         lastFrameMs = now
 
-// TARGETS = surové vstupy z MainActivity
         val targetPitch = pitchDeg.coerceIn(-20f, 20f)
         val targetRoll = rollDeg.coerceIn(-89f, 89f)
 
-// “gyro inertia” – doladíš tau (0.10–0.25s je fajn)
         val tauPitch = 0.18f
         val tauRoll = 0.14f
 
@@ -167,7 +133,7 @@ class AttitudeHudView @JvmOverloads constructor(
             dispRoll = smoothToward(dispRoll, targetRoll, dtSec, tauRoll)
         }
 
-// ak chceš, nech sa to renderuje aj medzi frame-ami:
+        // render aj medzi frame-ami
         postInvalidateOnAnimation()
 
         val w = width.toFloat()
@@ -176,74 +142,287 @@ class AttitudeHudView @JvmOverloads constructor(
 
         canvas.drawColor(Color.BLACK)
 
-        // Heading strip
-        val headingH = h * 0.16f
-        drawHeadingBar(canvas, RectF(0f, 0f, w, headingH))
+        // ===== TOP DATA BAR (full width, thin) =====
+        val barH = dp(34f)                 // bolo veľké -> zmenšené
+        val barTop = paddingTop.toFloat()
+        val barRect = RectF(0f, barTop, w, barTop + barH)
+        drawTopNavBar(canvas, barRect)
 
-        // Attitude area
-        val attTop = headingH
+        val attTop = barRect.bottom + dp(4f)
         val attH = h - attTop
-
-        // Circle instrument centered in available area
         val size = min(w, attH)
         val cx = w / 2f
         val cy = attTop + attH / 2f
         val radius = size * 0.46f
 
+
         val circleRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
         val clipPath = Path().apply { addOval(circleRect, Path.Direction.CW) }
 
-        // ===== CLIP to circle =====
+        // clip to circle
         canvas.save()
         canvas.clipPath(clipPath)
 
-        // ===== MOVING BACKGROUND (classic attitude indicator) =====
+        // moving background (classic)
         val roll = dispRoll
         val pitch = dispPitch
 
-
-        // pxPerDeg tuned to circle size
         val pxPerDeg = (radius * 0.55f) / 20f
+        val pitchOffsetPx = (-pitch) * pxPerDeg // ak máš opačne, zmeň znamienko tu
 
-        // IMPORTANT: decide sign once:
-        // If +pitch should move horizon DOWN (nose up), keep +pitch => +offset (down).
-        // If it's opposite in your data, flip sign here.
-        val pitchOffsetPx = (-pitch) * pxPerDeg
-
-        // Rotate + translate the BACKGROUND (horizon disk)
         canvas.save()
-        canvas.rotate(+roll, cx, cy)           // background tilts opposite to aircraft bank
-        canvas.translate(0f, pitchOffsetPx)    // background moves for pitch
+        // Background tilts opposite (instrument style):
+        canvas.rotate(+roll, cx, cy)
+        canvas.translate(0f, pitchOffsetPx)
 
-        // Draw sky/ground big enough to cover circle during rotation
-        val pad = radius * 2f
+        val pad = radius * 2.2f
         val horizonY = cy
 
         canvas.drawRect(cx - pad, cy - pad, cx + pad, horizonY, pSky)
         canvas.drawRect(cx - pad, horizonY, cx + pad, cy + pad, pGround)
         canvas.drawLine(cx - pad, horizonY, cx + pad, horizonY, pHorizon)
 
-        // Pitch ladder limited to +/- 20
         drawPitchLadderCircle(canvas, cx, cy, radius, pxPerDeg)
+        canvas.restore()
 
-        canvas.restore() // end background transform
-
-        // ===== FIXED AIRCRAFT MARKER (wings + arc) =====
+        // fixed marker (wings + arc)
         drawFixedAircraftMarkerWithArc(canvas, cx, cy, radius)
 
-        canvas.restore() // end clip
+        canvas.restore()
 
-        // ===== BANK SCALE ON RIM (fixed) =====
-        drawBankScaleOnRim(canvas, cx, cy, radius, rollDeg)
+        // bank scale on rim (index fixed, scale rotates)
+        drawBankScaleOnRim(canvas, cx, cy, radius, dispRoll)
 
-        drawSpeedTapeLeft(canvas, cx, cy, radius)
-        drawAltTapeRight(canvas, cx, cy, radius)
-
-        // Outer rim
+        // outer rim
         canvas.drawCircle(cx, cy, radius, pRing)
+
+
+
+        // SPD/ALT hore
+        val infoY = barRect.bottom + dp(24f)
+        val leftX = dp(14f)
+        val rightX = w - dp(14f)
+
+        drawCornerValue(canvas, leftX, infoY, "SPD", speedKts, "KT", alignRight = false)
+        drawCornerValue(canvas, rightX, infoY, "ALT", altitudeFt, "FT", alignRight = true)
+
+// VS meter vedľa kruhu (bez textu)
+        drawVsMeter(canvas, cx, cy, radius, barRect, infoY, vsFpm)
+
+// VS text vpravo dole (ako SPD/ALT)
+        val vsLabelY = (cy + radius) - dp(18f)          // trochu nad spodkom kruhu
+        drawCornerValue(canvas, rightX, vsLabelY, "VS", vsFpm, "FPM", alignRight = true)
+
+
     }
 
+    private fun drawVsMeter(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        barRect: RectF,
+        infoY: Float,      // Y kde začína SPD/ALT blok
+        vsFpm: Float?
+    ) {
+        val gap = dp(8f)
+        val meterW = dp(20f)          // menší, aby bol "medzi"
+        val topSafe = infoY + dp(34f) // nech meter nezačne v oblasti ALT/SPD textu
+        val bottomSafe = (cy + radius) - dp(40f) // nech meter nekoliduje s VS textom dole
 
+        val top = max(barRect.bottom + dp(6f), topSafe)
+        val bottom = max(top + dp(80f), bottomSafe)
+
+        // napravo od kruhu, ale v rámci obrazovky
+        var left = cx + radius + gap
+        val maxRight = width.toFloat() - dp(8f)
+        if (left + meterW > maxRight) left = maxRight - meterW
+
+        val r = RectF(left, top, left + meterW, bottom)
+
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(120, 0, 0, 0) }
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(200, 255, 255, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = dp(2f)
+        }
+        canvas.drawRoundRect(r, dp(8f), dp(8f), bg)
+        canvas.drawRoundRect(r, dp(8f), dp(8f), stroke)
+
+        val scaleTop = r.top + dp(10f)
+        val scaleBottom = r.bottom - dp(10f)
+        val midY = (scaleTop + scaleBottom) / 2f
+
+        val range = 2000f
+        val pxPerFpm = ((scaleBottom - scaleTop) * 0.45f) / range
+
+        // 0 line
+        canvas.drawLine(r.left + dp(5f), midY, r.right - dp(5f), midY, pLadder)
+
+        // ticks
+        for (v in -2000..2000 step 500) {
+            val yy = midY - (v * pxPerFpm)
+            if (yy < scaleTop || yy > scaleBottom) continue
+            val len = if (v % 1000 == 0) dp(10f) else dp(7f)
+            canvas.drawLine(r.right - dp(5f) - len, yy, r.right - dp(5f), yy, pLadder)
+        }
+
+        // pointer
+        val value = (vsFpm ?: 0f).coerceIn(-range, range)
+        val py = (midY - value * pxPerFpm).coerceIn(scaleTop, scaleBottom)
+
+        val pointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 193, 7)
+            strokeWidth = dp(4f)
+            strokeCap = Paint.Cap.ROUND
+        }
+        canvas.drawLine(r.left + dp(5f), py, r.right - dp(5f), py, pointer)
+    }
+
+    private fun drawCornerValue(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        label: String,
+        value: Float?,
+        unit: String,
+        alignRight: Boolean
+    ) {
+        val vTxt = if (value != null && value.isFinite()) "${value.roundToInt()} $unit" else "N/A $unit"
+
+        val labelPaint = Paint(pTextSmall).apply { textSize = sp(11f) }
+        val valuePaint = Paint(pText).apply { textSize = sp(16f) }
+
+        val labelW = labelPaint.measureText(label)
+        val valueW = valuePaint.measureText(vTxt)
+
+        val lx = if (alignRight) x - labelW else x
+        val vx = if (alignRight) x - valueW else x
+
+        canvas.drawText(label, lx, y, labelPaint)
+        canvas.drawText(vTxt, vx, y + dp(20f), valuePaint)
+    }
+
+    // =========================
+    // TOP DATA BAR
+    // =========================
+    private fun drawTopNavBar(canvas: Canvas, r: RectF) {
+        canvas.drawRoundRect(r, dp(14f), dp(14f), pBarBg)
+
+        val pad = dp(16f)
+
+        val crsTxt = "CRS " + (crsDeg?.roundToInt()?.toString()?.padStart(3,'0') ?: "---") + "°"
+        val hdgTxt = "HDG " + headingDeg.roundToInt().toString().padStart(3,'0') + "°"
+
+        val yText = r.centerY() + pBarText.textSize * 0.35f
+
+        // left CRS
+        canvas.drawText(crsTxt, r.left + pad, yText, pBarTextDim)
+        val crsW = pBarTextDim.measureText(crsTxt)
+
+        // right HDG
+        val hdgW = pBarText.measureText(hdgTxt)
+        canvas.drawText(hdgTxt, r.right - pad - hdgW, yText, pBarText)
+
+        // compass window (stred)
+        val compLeft = r.left + pad + crsW + dp(12f)
+        val compRight = r.right - pad - hdgW - dp(12f)
+        if (compRight > compLeft + dp(60f)) {
+            drawCompassStrip(canvas, RectF(compLeft, r.top, compRight, r.bottom), headingDeg)
+        }
+    }
+
+    private fun drawCompassStrip(canvas: Canvas, r: RectF, hdgDeg: Float) {
+        val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = dp(2f)
+        }
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = sp(12f)
+        }
+
+        val centerX = r.centerX()
+        val midY = r.centerY()
+
+        // koľko stupňov ukážeme v okne
+        val degSpan = 120f                 // +/-45° okolo headingu
+        val pxPerDeg = r.width() / degSpan
+
+        // baseline pre písmená (vyššie) a ticky (nižšie)
+        val yLetters = r.top + dp(13f)
+        val yTickTop = r.bottom - dp(18f)
+        val yTickBotMajor = r.bottom - dp(6f)
+        val yTickBotMinor = r.bottom - dp(10f)
+
+        val startDeg = hdgDeg - degSpan / 2f
+        val endDeg = hdgDeg + degSpan / 2f
+
+        // ticky každých 10°, major každých 30°
+        var d = floor(startDeg / 10f) * 10f
+        while (d <= endDeg) {
+            val signed = ((d - hdgDeg + 540f) % 360f) - 180f
+            val x = centerX + signed * pxPerDeg
+            if (x in r.left..r.right) {
+                val isMajor = (d.roundToInt() % 30 == 0)
+                canvas.drawLine(
+                    x,
+                    yTickTop,
+                    x,
+                    if (isMajor) yTickBotMajor else yTickBotMinor,
+                    tickPaint
+                )
+            }
+            d += 10f
+        }
+
+
+        // --- anchor ticks presne pod smerovými písmenami ---
+        val anchorPaint = Paint(tickPaint).apply { strokeWidth = dp(2.5f) }
+
+        val anchorTop = yTickTop
+        val anchorBot = yTickBotMajor   // rovnaká dĺžka ako major (alebo ešte o 2dp dlhšie)
+
+        val dirs = listOf(
+            0f to "N", 45f to "NE", 90f to "E", 135f to "SE",
+            180f to "S", 225f to "SW", 270f to "W", 315f to "NW"
+        )
+
+        for ((deg, label) in dirs) {
+            val signed = ((deg - hdgDeg + 540f) % 360f) - 180f
+            val x = centerX + signed * pxPerDeg
+
+            // len ak je bod v okne
+            if (x < r.left || x > r.right) continue
+
+            // vždy dokresli "anchor" tick presne pod label
+            canvas.drawLine(x, anchorTop, x, anchorBot, anchorPaint)
+        }
+
+        for ((deg, label) in dirs) {
+            val signed = ((deg - hdgDeg + 540f) % 360f) - 180f
+            val x = centerX + signed * pxPerDeg
+            val tw = textPaint.measureText(label)
+            if (x - tw/2f >= r.left && x + tw/2f <= r.right) {
+                canvas.drawText(label, x - tw/2f, yLetters, textPaint)
+            }
+        }
+
+        // malý “lubber line” marker v strede (zlatý)
+        val lub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 193, 7)
+            strokeWidth = dp(2f)
+            strokeCap = Paint.Cap.ROUND
+        }
+        canvas.drawLine(centerX, r.top + dp(6f), centerX, r.bottom - dp(6f), lub)
+    }
+
+    // =========================
+    // ATTITUDE ELEMENTS
+    // =========================
     private fun drawPitchLadderCircle(
         canvas: Canvas,
         cx: Float,
@@ -251,16 +430,13 @@ class AttitudeHudView @JvmOverloads constructor(
         radius: Float,
         pxPerDeg: Float
     ) {
-        // draw +/- 20 deg, step 5, label only 10 and 20
         for (deg in -20..20 step 5) {
             if (deg == 0) continue
-
             val y = cy - deg * pxPerDeg
             if (y < cy - radius || y > cy + radius) continue
 
             val isMajor = (abs(deg) % 10 == 0)
             val halfLen = if (isMajor) radius * 0.45f else radius * 0.28f
-
             canvas.drawLine(cx - halfLen, y, cx + halfLen, y, pLadder)
 
             if (isMajor) {
@@ -272,31 +448,20 @@ class AttitudeHudView @JvmOverloads constructor(
     }
 
     private fun drawFixedAircraftMarkerWithArc(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        // Wings line (fixed)
         val wingHalf = radius * 0.55f
-        val wingY = cy
-        canvas.drawLine(cx - wingHalf, wingY, cx + wingHalf, wingY, pPointer)
+        canvas.drawLine(cx - wingHalf, cy, cx + wingHalf, cy, pPointer)
 
-        // Center notch (small caret)
-        //val notchW = dp(14f)
-       // val notchH = dp(10f)
-       // canvas.drawLine(cx - notchW, wingY, cx, wingY - notchH, pPointer)
-       // canvas.drawLine(cx + notchW, wingY, cx, wingY - notchH, pPointer)
-
-        // Arc ("oblúčik") under wings like in real instrument
-        val arcR = radius * 0.15f
+        // smaller arc (as you wanted)
+        val arcR = radius * 0.11f
         val arcRect = RectF(cx - arcR, cy - arcR, cx + arcR, cy + arcR)
-        // lower half arc
         canvas.drawArc(arcRect, 0f, 180f, false, pPointer)
 
-        // Small center dot
         canvas.drawCircle(cx, cy, dp(3f), Paint(pPointer).apply { style = Paint.Style.FILL })
     }
 
     private fun drawBankScaleOnRim(canvas: Canvas, cx: Float, cy: Float, radius: Float, rollDeg: Float) {
-        // ===== 1) ROTUJEME LEN STUPNICU (dieliky), INDEX (trojuholník) zostane pevný =====
+        // rotate only the scale, keep index fixed
         canvas.save()
-        // stupnica sa posúva opačne než roll, aby index ukazoval správny dielik
         canvas.rotate(-rollDeg.coerceIn(-90f, 90f), cx, cy)
 
         val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -306,10 +471,9 @@ class AttitudeHudView @JvmOverloads constructor(
             strokeCap = Paint.Cap.ROUND
         }
 
-        // dieliky po 10°
         for (a in -60..60 step 10) {
-            val isMajor = (a % 30 == 0) // 30, 60
-            val isMid = (a % 20 == 0)   // 20, 40 (voliteľné)
+            val isMajor = (a % 30 == 0)
+            val isMid = (a % 20 == 0)
             val len = when {
                 a == 0 -> dp(18f)
                 isMajor -> dp(16f)
@@ -317,7 +481,6 @@ class AttitudeHudView @JvmOverloads constructor(
                 else -> dp(10f)
             }
 
-            // uhol: 0° je hore (12h). Preto -90 posun.
             val ang = Math.toRadians((a - 90).toDouble())
             val r1 = radius - len
             val r2 = radius
@@ -332,7 +495,7 @@ class AttitudeHudView @JvmOverloads constructor(
 
         canvas.restore()
 
-        // ===== 2) PEVNÝ INDEX (trojuholník) – kreslíme bez rotácie =====
+        // fixed index triangle
         val tri = Path().apply {
             val top = cy - radius + dp(6f)
             val bottom = top + dp(22f)
@@ -349,230 +512,9 @@ class AttitudeHudView @JvmOverloads constructor(
         canvas.drawPath(tri, triPaint)
     }
 
-
-    private fun drawHeadingBar(canvas: Canvas, r: RectF) {
-        // background
-        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(25, 34, 55) }
-        canvas.drawRoundRect(r, dp(12f), dp(12f), bg)
-
-        // text centered
-        val txt = "Heading: ${headingDeg.roundToInt()}°"
-        val tw = pText.measureText(txt)
-        val x = (r.width() - tw) / 2f
-        val y = r.centerY() + pText.textSize * 0.35f
-        canvas.drawText(txt, x, y, pText)
-    }
-
-    private fun drawPitchLadder(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        attTop: Float,
-        w: Float,
-        h: Float,
-        pxPerDeg: Float,
-        pitchOffset: Float
-    ) {
-        val halfLenMajor = w * 0.22f
-        val halfLenMinor = w * 0.14f
-
-        for (deg in -40..40 step 5) {
-            if (deg == 0) continue
-            val y = cy + pitchOffset - deg * pxPerDeg
-            if (y < attTop - dp(40f) || y > h + dp(40f)) continue
-
-            val major = (deg % 10 == 0)
-            val halfLen = if (major) halfLenMajor else halfLenMinor
-
-            canvas.drawLine(cx - halfLen, y, cx + halfLen, y, pLadder)
-
-            if (major) {
-                val label = abs(deg).toString()
-                canvas.drawText(label, cx - halfLen - dp(28f), y + pTextSmall.textSize * 0.35f, pTextSmall)
-                canvas.drawText(label, cx + halfLen + dp(10f), y + pTextSmall.textSize * 0.35f, pTextSmall)
-            }
-        }
-    }
-
-
-
-
-    private fun drawSpeedTapeLeft(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        val w = width.toFloat()
-        val tapeW = radius * 0.42f
-        val tapeH = radius * 1.35f
-
-        val left = (cx - radius) - tapeW - dp(10f)
-        val top = cy - tapeH / 2f
-        val r = RectF(left, top, left + tapeW, top + tapeH)
-
-        drawTapeBox(canvas, r, title = "SPD", value = speed, unit = "km/h")
-    }
-    private fun drawAltTapeRight(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        val w = width.toFloat()
-        val tapeW = radius * 0.42f
-        val tapeH = radius * 1.35f
-
-        val left = (cx + radius) + dp(10f)
-        val top = cy - tapeH / 2f
-        val r = RectF(left, top, left + tapeW, top + tapeH)
-
-        // ALT tape
-        drawTapeBox(canvas, r, title = "ALT", value = altitude, unit = "m")
-
-        // VS malý box vedľa/na spodku ALT
-        val vsBoxH = dp(34f)
-        val vsR = RectF(r.left, r.bottom + dp(8f), r.right, r.bottom + dp(8f) + vsBoxH)
-        drawSmallValueBox(canvas, vsR, title = "VS", value = vsMps, unit = "m/s")
-    }
-    private fun drawAltTape(canvas: Canvas, r: RectF) {
-        drawTape(canvas, r, "ALT", altitude, unit = "m", highlightColor = Color.rgb(255, 193, 7))
-    }
-    private fun drawTapeBox(canvas: Canvas, r: RectF, title: String, value: Float?, unit: String) {
-        // panel
-        canvas.drawRoundRect(r, dp(10f), dp(10f), pPanel)
-        canvas.drawRoundRect(r, dp(10f), dp(10f), pPanelStroke)
-
-        // title
-        val tx = r.left + dp(10f)
-        val ty = r.top + dp(22f)
-        canvas.drawText(title, tx, ty, pText)
-
-        // ticks
-        val midY = r.centerY()
-        val stepPx = dp(26f)
-
-        if (value == null || !value.isFinite()) {
-            canvas.drawText("N/A", tx, midY, pText)
-            return
-        }
-
-        val v = value
-        val base = (v / 10f).roundToInt() * 10
-
-        val tickPaint = Paint(pLadder).apply { strokeWidth = dp(2f) }
-
-        var y = midY - 5 * stepPx
-        for (i in -5..5) {
-            val tickVal = base + i * 10
-            val isMajor = (tickVal % 20 == 0)
-
-            val x1 = r.left + dp(10f)
-            val x2 = r.left + if (isMajor) dp(46f) else dp(32f)
-            canvas.drawLine(x1, y, x2, y, tickPaint)
-
-            if (isMajor) {
-                canvas.drawText(
-                    tickVal.toString(),
-                    r.left + dp(54f),
-                    y + pTextSmall.textSize * 0.35f,
-                    pTextSmall
-                )
-            }
-            y += stepPx
-        }
-
-        // value window
-        val boxW = r.width() * 0.78f
-        val boxH = dp(36f)
-        val box = RectF(
-            r.centerX() - boxW / 2f,
-            midY - boxH / 2f,
-            r.centerX() + boxW / 2f,
-            midY + boxH / 2f
-        )
-        canvas.drawRoundRect(box, dp(8f), dp(8f), pValueBox)
-
-        val valTxt = v.roundToInt().toString()
-        val tw = pValueText.measureText(valTxt)
-        canvas.drawText(valTxt, box.centerX() - tw / 2f, box.centerY() + pValueText.textSize * 0.35f, pValueText)
-
-        // unit
-        canvas.drawText(unit, box.right + dp(6f), box.centerY() + pTextSmall.textSize * 0.35f, pTextSmall)
-    }
-
-    private fun drawSmallValueBox(canvas: Canvas, r: RectF, title: String, value: Float?, unit: String) {
-        canvas.drawRoundRect(r, dp(10f), dp(10f), pPanel)
-        canvas.drawRoundRect(r, dp(10f), dp(10f), pPanelStroke)
-
-        val t = "$title:"
-        canvas.drawText(t, r.left + dp(10f), r.centerY() + pTextSmall.textSize * 0.35f, pTextSmall)
-
-        val txt = if (value == null || !value.isFinite()) "N/A" else String.format("%.1f", value)
-        val tw = pText.measureText(txt)
-        canvas.drawText(txt, r.right - dp(10f) - tw, r.centerY() + pText.textSize * 0.35f, pText)
-
-        // unit vpravo (malé)
-        canvas.drawText(unit, r.right + dp(6f), r.centerY() + pTextSmall.textSize * 0.35f, pTextSmall)
-    }
-    private fun drawTape(
-        canvas: Canvas,
-        r: RectF,
-        title: String,
-        value: Float?,
-        unit: String,
-        highlightColor: Int
-    ) {
-        // panel
-        canvas.drawRoundRect(r, dp(8f), dp(8f), pPanel)
-        canvas.drawRoundRect(r, dp(8f), dp(8f), pPanelStroke)
-
-        // title
-        val titlePaint = Paint(pText).apply { textSize = sp(14f) }
-        val tx = r.left + dp(10f)
-        val ty = r.top + dp(22f)
-        canvas.drawText(title, tx, ty, titlePaint)
-
-        // scale ticks
-        val midY = r.centerY()
-        val stepPx = dp(28f)
-        val tickPaint = Paint(pLadder).apply { strokeWidth = dp(2f) }
-
-        // If no value, just show N/A
-        if (value == null || !value.isFinite()) {
-            canvas.drawText("N/A", tx, midY, pText)
-            return
-        }
-
-        val v = value
-
-        // draw a few ticks around the current value
-        val base = (v / 10f).roundToInt() * 10
-        var y = midY - 5 * stepPx
-        for (i in -5..5) {
-            val tickVal = base + i * 10
-            val isMajor = (tickVal % 20 == 0)
-
-            val x1 = r.left + dp(10f)
-            val x2 = r.left + if (isMajor) dp(44f) else dp(30f)
-            canvas.drawLine(x1, y, x2, y, tickPaint)
-
-            if (isMajor) {
-                val label = tickVal.toString()
-                canvas.drawText(label, r.left + dp(52f), y + pTextSmall.textSize * 0.35f, pTextSmall)
-            }
-            y += stepPx
-        }
-
-        // value box
-        val boxW = r.width() * 0.75f
-        val boxH = dp(36f)
-        val box = RectF(r.centerX() - boxW / 2f, midY - boxH / 2f, r.centerX() + boxW / 2f, midY + boxH / 2f)
-
-        // small colored accent
-        val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = highlightColor; style = Paint.Style.FILL }
-        canvas.drawRoundRect(RectF(box.left - dp(8f), box.top, box.left + dp(6f), box.bottom), dp(6f), dp(6f), accent)
-
-        canvas.drawRoundRect(box, dp(8f), dp(8f), pValueBox)
-
-        val valTxt = v.roundToInt().toString()
-        val tw = pValueText.measureText(valTxt)
-        canvas.drawText(valTxt, box.centerX() - tw / 2f, box.centerY() + pValueText.textSize * 0.35f, pValueText)
-
-        // unit (small)
-        canvas.drawText(unit, box.right + dp(6f), box.centerY() + pTextSmall.textSize * 0.35f, pTextSmall)
-    }
-
+    // =========================
+    // HELPERS
+    // =========================
     private fun norm360(d: Float): Float {
         var x = d % 360f
         if (x < 0f) x += 360f
@@ -582,3 +524,5 @@ class AttitudeHudView @JvmOverloads constructor(
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
     private fun sp(v: Float): Float = v * resources.displayMetrics.scaledDensity
 }
+
+

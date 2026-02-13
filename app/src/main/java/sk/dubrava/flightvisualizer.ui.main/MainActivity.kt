@@ -2,15 +2,11 @@ package sk.dubrava.flightvisualizer.ui.main
 
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.view.Choreographer
 import android.view.Menu
 import android.view.MenuItem
-import android.view.View as AndroidView
 import android.widget.Button
 import android.widget.SeekBar
-import android.widget.TextView
-import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -26,20 +22,14 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.Marker
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import sk.dubrava.flightvisualizer.R
 import sk.dubrava.flightvisualizer.core.AppNav
 import sk.dubrava.flightvisualizer.core.FlightHelper
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
-import sk.dubrava.flightvisualizer.ui.main.AttitudeHudView
-import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -63,11 +53,26 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private lateinit var attitudeView: AttitudeHudView
 
+    private var lastFrameNanos: Long = 0L
+    private var playbackTimeSec = 0.0          // “playhead” v sekundách (od začiatku)
+    private var segmentIndex = 0               // medzi segmentIndex a segmentIndex+1 interpolujeme
+    private var segmentT0Sec = 0.0             // začiatok segmentu v sekundách (kumulatívne)
+    private var segmentDurSec = 0.2            // dĺžka segmentu v sekundách
+    private val baseTimeScale = 1.6  // skús 1.4 až 2.2 podľa pocitu
+    private val choreographer: Choreographer by lazy { Choreographer.getInstance() }
+    private var isFrameCallbackPosted = false
+    private var camLat = Double.NaN
+    private var camLon = Double.NaN
+
+    private var lastSeekbarUpdateMs = 0L
+    private var lastSeekbarValue = -1
+
+
 
     private var isPlaying = false
     private var currentIndex = 0
-    private val playHandler = Handler(Looper.getMainLooper())
     private var playbackSpeed = 2.0
+
 
     private var flightMarker: Marker? = null
 
@@ -93,6 +98,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // -----------------------------
     // Helpers
     // -----------------------------
+
     private fun norm360(d: Double): Double {
         var x = d % 360.0
         if (x < 0) x += 360.0
@@ -147,6 +153,55 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    private fun lerp(a: Double, b: Double, t: Double): Double = a + (b - a) * t
+
+    private fun lerpAngleDeg(aDeg: Double, bDeg: Double, t: Double): Double {
+        var diff = bDeg - aDeg
+        while (diff > 180.0) diff -= 360.0
+        while (diff < -180.0) diff += 360.0
+        return norm360(aDeg + diff * t)
+    }
+
+    private fun segDurationSec(i: Int): Double {
+        val fp = flightPoints.getOrNull(i) ?: return 0.2
+        val dt = fp.dtSec
+        return if (dt.isFinite() && dt > 0.0) dt else 0.2
+    }
+
+    private fun totalDurationSec(): Double {
+        val lastSeg = (framesCount - 2).coerceAtLeast(0)
+        var sum = 0.0
+        for (i in 0..lastSeg) sum += segDurationSec(i)
+        return sum
+    }
+
+    private fun seekToTimeSec(tSec: Double) {
+        if (framesCount < 2) {
+            playbackTimeSec = 0.0
+            segmentIndex = 0
+            segmentT0Sec = 0.0
+            segmentDurSec = 0.2
+            return
+        }
+
+        playbackTimeSec = tSec.coerceIn(0.0, totalDurationSec())
+
+        var i = 0
+        var acc = 0.0
+        val lastSeg = (framesCount - 2).coerceAtLeast(0)
+
+        while (i < lastSeg) {
+            val d = segDurationSec(i)
+            if (playbackTimeSec < acc + d) break
+            acc += d
+            i++
+        }
+
+        segmentIndex = i
+        segmentT0Sec = acc
+        segmentDurSec = segDurationSec(i).coerceAtLeast(0.02)
+    }
+
     // -----------------------------
     // Lifecycle
     // -----------------------------
@@ -171,7 +226,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         btnStepForward = findViewById(R.id.btnStepForward)
 
         attitudeView = findViewById(R.id.attitudeView)
-
 
 
         // systémový BACK – nech ide cez safeExit
@@ -217,7 +271,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     override fun onDestroy() {
-        playHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
@@ -248,7 +301,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         isExiting = true
 
         pausePlayback()
-        playHandler.removeCallbacksAndMessages(null)
 
         googleMap = null
         flightMarker = null
@@ -291,6 +343,35 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 true
             )
         )
+    private fun advancePlayhead(frameTimeNanos: Long) {
+        if (lastFrameNanos == 0L) {
+            lastFrameNanos = frameTimeNanos
+            return
+        }
+
+        val dt = ((frameTimeNanos - lastFrameNanos).coerceAtMost(50_000_000L)) / 1_000_000_000.0
+        lastFrameNanos = frameTimeNanos
+
+        // posuň playhead
+        playbackTimeSec += dt * playbackSpeed * baseTimeScale
+
+        // koniec?
+        val total = totalDurationSec()
+        if (playbackTimeSec >= total) {
+            playbackTimeSec = total
+            isPlaying = false
+            btnPlay.text = "Play"
+            return
+        }
+
+        // ak playhead preskočil viac segmentov, dobehni segmentIndex
+        while (segmentIndex < framesCount - 2 && playbackTimeSec >= segmentT0Sec + segmentDurSec) {
+            segmentT0Sec += segmentDurSec
+            segmentIndex++
+            segmentDurSec = segDurationSec(segmentIndex).coerceAtLeast(0.02)
+        }
+    }
+
 
 
     // -----------------------------
@@ -330,9 +411,19 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 if (!hasFrames()) return
-                currentIndex = progress.coerceIn(0, lastFrameIndex)
-                renderFrameSafe(currentIndex)
+
+                pausePlayback()
+
+                val i = progress.coerceIn(0, lastFrameIndex)
+                renderFrameSafe(i)
+
+                // zosúladiť playhead čas s indexom (aby play pokračoval plynule odtiaľ)
+                var t0 = 0.0
+                val targetSeg = i.coerceIn(0, (framesCount - 2).coerceAtLeast(0))
+                for (k in 0 until targetSeg) t0 += segDurationSec(k)
+                seekToTimeSec(t0)
             }
+
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) = pausePlayback()
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -418,8 +509,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         attitudeView.headingDeg = yawNorm.toFloat()
 
         val spd = fp.speedKmh?.takeIf { it.isFinite() }
-        attitudeView.speed = spd?.toFloat()
-        attitudeView.altitude = altM.toFloat()
+        attitudeView.speedKts = spd?.toFloat()
+        attitudeView.altitudeFt = altM.toFloat()
 
         // =========================
         // 2) Texty (zatiaľ nech ostanú, potom ich nahradíme “tapes”)
@@ -453,22 +544,36 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // Playback
     // -----------------------------
     private fun startPlayback() {
-        if (isExiting) return
-        if (!hasFrames()) return
-        if (isPlaying) return
+        if (isExiting || !hasFrames() || isPlaying) return
+
+        // zosúladiť playhead podľa aktuálneho seekbaru
+        val i = playbackSeekBar.progress.coerceIn(0, lastFrameIndex)
+        var t0 = 0.0
+        val targetSeg = i.coerceIn(0, (framesCount - 2).coerceAtLeast(0))
+        for (k in 0 until targetSeg) t0 += segDurationSec(k)
+        seekToTimeSec(t0)
 
         isPlaying = true
         btnPlay.text = "Pause"
-        currentIndex = playbackSeekBar.progress.coerceIn(0, lastFrameIndex)
-        playHandler.post(playStepRunnable)
+        lastFrameNanos = 0L
+
+        if (!isFrameCallbackPosted) {
+            choreographer.postFrameCallback(frameCallback)
+            isFrameCallbackPosted = true
+        }
     }
+
+
 
     private fun pausePlayback() {
         isPlaying = false
-        playHandler.removeCallbacks(playStepRunnable)
-        playHandler.removeCallbacksAndMessages(null)
         btnPlay.text = "Play"
+        choreographer.removeFrameCallback(frameCallback)
+        isFrameCallbackPosted = false
+        lastFrameNanos = 0L
     }
+
+
 
     private fun resetPlayback() {
         pausePlayback()
@@ -481,44 +586,36 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         flightMarker?.position = start
         googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(start, 15f))
 
+        seekToTimeSec(0.0)
+        lastFrameNanos = 0L
+        segmentIndex = 0
+        segmentT0Sec = 0.0
+        segmentDurSec = segDurationSec(0).coerceAtLeast(0.02)
+
+
         renderFrameSafe(0)
-    }
-
-    private val playStepRunnable = object : Runnable {
-        override fun run() {
-            if (isExiting) return
-            if (!isPlaying || !hasFrames()) return
-
-            if (currentIndex > lastFrameIndex) {
-                isPlaying = false
-                btnPlay.text = "Play"
-                return
-            }
-
-            renderFrameSafe(currentIndex)
-            currentIndex++
-
-            val delay = (200L / playbackSpeed).toLong().coerceAtLeast(40L)
-            playHandler.postDelayed(this, delay)
-        }
     }
 
     private fun cyclePlaybackSpeed() {
         playbackSpeed = when (playbackSpeed) {
-            2.0 -> 1.0
+            0.5 -> 1.0
             1.0 -> 2.0
-            else -> 2.0
+            2.0 -> 4.0
+            else -> 0.5
         }
 
         val label = when (playbackSpeed) {
-            2.0 -> "1X"
-            1.0 -> "0.5X"
-            else -> "1X"
+            0.5 -> "0.5X"
+            1.0 -> "1X"
+            2.0 -> "2X"
+            4.0 -> "4X"
+            else -> "${playbackSpeed}X"
         }
 
         btnSpeed.text = label
         Toast.makeText(this, "Rýchlosť prehrávania: $label", Toast.LENGTH_SHORT).show()
     }
+
 
     // -----------------------------
     // Polyline
@@ -534,6 +631,115 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         map.addPolyline(polylineOptions)
     }
+
+    private fun renderInterpolated(frameTimeNanos: Long) {
+        if (isExiting) return
+        if (framesCount < 2) return
+
+        val i = segmentIndex.coerceIn(0, framesCount - 2)
+        val a = flightPoints[i]
+        val b = flightPoints[i + 1]
+
+        val ta = segmentT0Sec
+        val tb = segmentT0Sec + segmentDurSec
+        val t = if (tb > ta) ((playbackTimeSec - ta) / (tb - ta)) else 0.0
+        val tt = t.coerceIn(0.0, 1.0)
+
+        // --- Interpolácia polohy ---
+        val lat = lerp(a.latitude, b.latitude, tt)
+        val lon = lerp(a.longitude, b.longitude, tt)
+        val pos = LatLng(lat, lon)
+        flightMarker?.position = pos
+
+        if (isPlaying) {
+            updateCameraSmooth(pos)
+        }
+
+
+
+        // --- Interpolácia orientácie (heading/yaw/pitch/roll) ---
+        val pitch = lerp(a.pitch, b.pitch, tt)
+        val roll  = lerp(a.roll,  b.roll,  tt)
+
+        // yaw preferuj yawDeg, inak heading, inak GPS bearing
+        val yawA = (a.yawDeg?.takeIf { it.isFinite() } ?: a.heading.takeIf { it.isFinite() })
+            ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
+
+        val yawB = (b.yawDeg?.takeIf { it.isFinite() } ?: b.heading.takeIf { it.isFinite() })
+            ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
+
+        val yaw = lerpAngleDeg(yawA, yawB, tt)
+
+        // HUD
+        attitudeView.pitchDeg = pitch.toFloat()
+        attitudeView.rollDeg = roll.toFloat()
+        attitudeView.headingDeg = yaw.toFloat()
+
+        // speed/alt/vs (lerp keď existuje, inak N/A)
+        val spd = if (a.speedKmh != null && b.speedKmh != null) lerp(a.speedKmh, b.speedKmh, tt) else a.speedKmh
+        attitudeView.speedKts = spd?.takeIf { it.isFinite() }?.toFloat()
+
+        val alt = lerp(a.altitude, b.altitude, tt)
+        attitudeView.altitudeFt = alt.toFloat()
+
+        // VS: ak máš vsMps (m/s), premeň na fpm (1 m/s = 196.850394 fpm)
+        val vs = if (a.vsMps != null && b.vsMps != null) lerp(a.vsMps, b.vsMps, tt) else a.vsMps
+        val vsFpmLocal = vs?.takeIf { it.isFinite() }?.let { (it * 196.850394).toFloat() }
+        attitudeView.vsFpm = vsFpmLocal
+
+        // map marker yaw
+        flightMarker?.rotation = yaw.toFloat()
+
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        if (i != lastSeekbarValue && (nowMs - lastSeekbarUpdateMs) >= 80L) { // 12.5 Hz
+            lastSeekbarValue = i
+            lastSeekbarUpdateMs = nowMs
+            // ešte lepšie (ak máš Material/AndroidX): seekBar.setProgress(i, false)
+            playbackSeekBar.progress = i
+        }
+
+
+            }
+
+    private val frameCallback: Choreographer.FrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (isExiting || !isPlaying) {
+                isFrameCallbackPosted = false
+                lastFrameNanos = 0L
+                return
+            }
+
+            advancePlayhead(frameTimeNanos)
+            if (!isPlaying) return
+
+            renderInterpolated(frameTimeNanos)
+
+            choreographer.postFrameCallback(this)
+            isFrameCallbackPosted = true
+        }
+
+    }
+
+
+
+    private fun updateCameraSmooth(pos: LatLng) {
+        val map = googleMap ?: return
+
+        val alpha = 0.12   // 0.08–0.18 (sweet spot pre 2×)
+
+        camLat = if (camLat.isNaN()) pos.latitude
+        else camLat + (pos.latitude - camLat) * alpha
+
+        camLon = if (camLon.isNaN()) pos.longitude
+        else camLon + (pos.longitude - camLon) * alpha
+
+        val smoothPos = LatLng(camLat, camLon)
+
+        map.moveCamera(CameraUpdateFactory.newLatLng(smoothPos))
+    }
+
+
+
 
 
     // -----------------------------
