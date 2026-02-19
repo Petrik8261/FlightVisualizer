@@ -13,6 +13,10 @@ class StartActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_start)
+        findViewById<Button>(R.id.btnExit).setOnClickListener {
+            finishAffinity()   // zavrie všetky aktivity
+        }
+
 
         val btnDrone = findViewById<Button>(R.id.btnDrone)
         val btnPlane = findViewById<Button>(R.id.btnPlane)
@@ -26,4 +30,5 @@ class StartActivity : AppCompatActivity() {
             putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
         })
     }
+
 }

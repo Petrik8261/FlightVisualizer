@@ -2,7 +2,6 @@ package sk.dubrava.flightvisualizer.core
 
 import android.content.ContentResolver
 import android.net.Uri
-import android.util.Log
 import com.google.android.gms.maps.model.LatLng
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
 import java.util.Locale
@@ -10,6 +9,7 @@ import java.util.Locale
 class FlightHelper(
     private val contentResolver: ContentResolver
 ) {
+
     companion object {
         private const val TAG = "FlightHelper"
     }
@@ -17,16 +17,13 @@ class FlightHelper(
     private val loader = FlightLoader(contentResolver)
 
     fun loadFlight(uri: Uri): List<FlightPoint> {
-        return try {
-            val points = loader.load(uri)
-            if (points.size < 2) {
-                Log.w(TAG, "loadFlight: not enough points (${points.size})")
-            }
-            points
-        } catch (e: Exception) {
-            Log.e(TAG, "loadFlight failed", e)
-            emptyList()
-        }
+        return loader.load(uri)
+    }
+
+
+    private fun readFirstLine(uri: Uri): String {
+        val input = contentResolver.openInputStream(uri) ?: return ""
+        return input.bufferedReader().use { it.readLine() ?: "" }
     }
 
     fun buildRoute(points: List<FlightPoint>): List<LatLng> =
@@ -53,6 +50,7 @@ class FlightHelper(
 
     fun isSupported(uri: Uri): Boolean {
         val name = (guessFileName(uri) ?: "").lowercase(Locale.ROOT)
-        return name.endsWith(".kml") || name.endsWith(".txt") || name.endsWith(".csv")
+        return name.endsWith(".csv")
     }
 }
+

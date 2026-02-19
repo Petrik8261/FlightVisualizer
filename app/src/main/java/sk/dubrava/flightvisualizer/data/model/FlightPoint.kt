@@ -1,21 +1,26 @@
 package sk.dubrava.flightvisualizer.data.model
 
 data class FlightPoint(
-    val time: String,
+    val tSec: Double,
+    val dtSec: Double,
     val latitude: Double,
     val longitude: Double,
-    val altitude: Double,
-    val heading: Double,
-    val pitch: Double,
-    val roll: Double,
+    val altitudeM: Double,
 
-    val dtSec: Double = Double.NaN,
-    val timeSource: TimeSource = TimeSource.REAL_TIMESTAMP,
+    val speedMps: Double?,     // nullable ak nie je
+    val vsMps: Double?,        // nullable ak nie je
 
-    val speedKmh: Double? = null,
-    val vsMps: Double? = null,
-    val yawDeg: Double? = null
+    val pitchDeg: Double?,     // deg
+    val rollDeg: Double?,      // deg
+    val yawDeg: Double?,       // deg (heading/yaw)
+    val headingDeg: Double?,   // voliteľne ak chceš odlíšiť heading vs yaw
+
+    val source: LogType
 )
+
+enum class LogType { MSFS, DRONE, GENERIC }
+
+
 
 
 

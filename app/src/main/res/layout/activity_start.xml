@@ -12,14 +12,13 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Flight Visualizer"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:textColor="#FFFFFF"
+        android:textSize="32sp"
+        android:textColor="@android:color/white"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/tvSubtitle"
+        android:layout_marginTop="120dp"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintVertical_chainStyle="packed"/>
+        app:layout_constraintEnd_toEndOf="parent"/>
+
 
     <!-- Podtitul -->
     <TextView
@@ -67,5 +66,19 @@
         app:layout_constraintTop_toBottomOf="@id/btnDrone"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- KONIEC -->
+    <Button
+        android:id="@+id/btnExit"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="KONIEC"
+        android:layout_margin="24dp"
+        android:backgroundTint="#B00020"
+        android:textColor="@android:color/white"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
 
 </androidx.constraintlayout.widget.ConstraintLayout>

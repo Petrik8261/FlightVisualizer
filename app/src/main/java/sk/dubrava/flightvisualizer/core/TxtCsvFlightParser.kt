@@ -5,7 +5,7 @@ import android.net.Uri
 import android.util.Log
 import com.google.android.gms.maps.model.LatLng
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
-import sk.dubrava.flightvisualizer.data.model.TimeSource
+import sk.dubrava.flightvisualizer.data.model.LogType
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -13,16 +13,17 @@ import kotlin.math.atan2
 class TxtCsvFlightParser(
     private val contentResolver: ContentResolver
 ) {
+
     companion object { private const val TAG = "TxtCsvFlightParser" }
 
     fun parse(uri: Uri): List<FlightPoint> {
+
         val input = contentResolver.openInputStream(uri) ?: return emptyList()
 
         val lines = input.bufferedReader().useLines { seq ->
-            seq.map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .toList()
+            seq.map { it.trim() }.filter { it.isNotEmpty() }.toList()
         }
+
         if (lines.size < 2) return emptyList()
 
         fun splitLineSmart(line: String): List<String> =
@@ -34,26 +35,23 @@ class TxtCsvFlightParser(
             }.map { it.trim() }
 
         fun toD(s: String?): Double? = s?.replace(",", ".")?.toDoubleOrNull()
-
-        fun Double.isValidLat() = this.isFinite() && this in -90.0..90.0
-        fun Double.isValidLon() = this.isFinite() && this in -180.0..180.0
-
-        fun parseHmsToSec(s: String): Double? {
-            val p = s.trim().split(":")
-            if (p.size != 3) return null
-            val h = p[0].toIntOrNull() ?: return null
-            val m = p[1].toIntOrNull() ?: return null
-            val sec = p[2].toIntOrNull() ?: return null
-            return (h * 3600 + m * 60 + sec).toDouble()
-        }
+        fun Double.isValidLat() = isFinite() && this in -90.0..90.0
+        fun Double.isValidLon() = isFinite() && this in -180.0..180.0
 
         fun parseTimeToSec(s: String): Double? {
             val v = s.trim()
             return if (v.contains(":")) {
-                parseHmsToSec(v)
+                val p = v.split(":")
+                if (p.size != 3) null
+                else {
+                    val h = p[0].toIntOrNull() ?: return null
+                    val m = p[1].toIntOrNull() ?: return null
+                    val sec = p[2].toIntOrNull() ?: return null
+                    (h * 3600 + m * 60 + sec).toDouble()
+                }
             } else {
-                v.replace(",", ".").toDoubleOrNull()?.let { msOrSec ->
-                    if (msOrSec > 10_000.0) msOrSec / 1000.0 else msOrSec
+                v.toDoubleOrNull()?.let {
+                    if (it > 10_000.0) it / 1000.0 else it
                 }
             }
         }
@@ -69,161 +67,92 @@ class TxtCsvFlightParser(
         val iTime = idx("time", "time_ms", "timestamp", "t_s") ?: return emptyList()
         val iLat  = idx("latitude", "lat", "lat_deg") ?: return emptyList()
         val iLon  = idx("longitude", "lon", "lon_deg", "lng") ?: return emptyList()
-        val iAlt  = idx("altitude", "altitude (m)", "alt_m", "alt", "height", "height(m)") ?: return emptyList()
-        val iSpd = idx("speed_mps", "groundspeed_mps", "spd_mps", "speed", "vel_mps")
-        val iVs  = idx("vspeed_mps", "verticalspeed_mps", "vs_mps", "v_speed_mps", "climb_mps")
+        val iAlt  = idx("altitude", "altitude (m)", "alt_m", "alt") ?: return emptyList()
+        val iSpd  = idx("speed_mps", "groundspeed_mps", "spd_mps", "speed")
+        val iVs   = idx("vspeed_mps", "verticalspeed_mps", "vs_mps")
         val iPitch = idx("pitch", "pitch_deg")
         val iRoll  = idx("roll", "roll_deg", "bank", "bank_deg")
-        val iYaw   = idx("yaw", "yaw_deg", "heading", "heading_deg", "true_heading")
+        val iYaw   = idx("yaw", "yaw_deg", "heading", "heading_deg")
 
-        val iX = idx("x")
-        val iY = idx("y")
-        val iZ = idx("z")
-
-        data class RawRow(
+        data class Raw(
             val tSec: Double,
             val lat: Double,
             val lon: Double,
-            val alt: Double,
-            val pitchDeg: Double?,
-            val rollDeg: Double?,
-            val yawDeg: Double?,
-            val spdMps: Double?,
+            val altM: Double,
+            val speedMps: Double?,
             val vsMps: Double?,
-            val ax: Double?,
-            val ay: Double?,
-            val az: Double?
+            val pitch: Double?,
+            val roll: Double?,
+            val yaw: Double?
         )
 
-        val rows = mutableListOf<RawRow>()
-        var lastBaseSec = Double.NaN
-        var sameSecondCounter = 0
+        val raw = mutableListOf<Raw>()
 
         for (i in 1 until lines.size) {
+
             val parts = splitLineSmart(lines[i])
             if (parts.size <= maxOf(iTime, iLat, iLon, iAlt)) continue
 
-            val baseSec = parseTimeToSec(parts[iTime]) ?: continue
-            val tSec = if (baseSec == lastBaseSec) {
-                sameSecondCounter++
-                baseSec + sameSecondCounter * 0.1
-            } else {
-                sameSecondCounter = 0
-                baseSec
-            }
-            lastBaseSec = baseSec
-
+            val tSec = parseTimeToSec(parts[iTime]) ?: continue
             val lat = toD(parts[iLat]) ?: continue
             val lon = toD(parts[iLon]) ?: continue
-            val alt = toD(parts[iAlt]) ?: continue
+            val altM = toD(parts[iAlt]) ?: continue
+
             if (!lat.isValidLat() || !lon.isValidLon()) continue
 
-            val spdFromFile = iSpd?.takeIf { it < parts.size }?.let { toD(parts[it]) }
-            val vsFromFile  = iVs?.takeIf { it < parts.size }?.let { toD(parts[it]) }
-
-            val pitchFromFile = iPitch?.takeIf { it < parts.size }?.let { toD(parts[it]) }
-            val rollFromFile  = iRoll?.takeIf { it < parts.size }?.let { toD(parts[it]) }
-            val yawFromFile   = iYaw?.takeIf { it < parts.size }?.let { toD(parts[it]) }
-
-            rows += RawRow(
+            raw += Raw(
                 tSec = tSec,
                 lat = lat,
                 lon = lon,
-                alt = alt,
-                spdMps = spdFromFile,
-                vsMps  = vsFromFile,
-                pitchDeg = pitchFromFile,
-                rollDeg = rollFromFile,
-                yawDeg = yawFromFile,
-                ax = iX?.takeIf { it < parts.size }?.let { toD(parts[it]) },
-                ay = iY?.takeIf { it < parts.size }?.let { toD(parts[it]) },
-                az = iZ?.takeIf { it < parts.size }?.let { toD(parts[it]) }
+                altM = altM,
+                speedMps = iSpd?.let { parts.getOrNull(it)?.let { toD(it) } },
+                vsMps = iVs?.let { parts.getOrNull(it)?.let { toD(it) } },
+                pitch = iPitch?.let { parts.getOrNull(it)?.let { toD(it) } },
+                roll  = iRoll?.let { parts.getOrNull(it)?.let { toD(it) } },
+                yaw   = iYaw?.let { parts.getOrNull(it)?.let { toD(it) } }
             )
         }
 
-        if (rows.size < 2) return emptyList()
+        if (raw.size < 2) return emptyList()
 
         val out = mutableListOf<FlightPoint>()
-        var lastCourse = 0.0
 
-        val maxSpeedKmh = 350.0
-        val maxVs = 10.0
+        val t0 = raw.first().tSec
+        var prevTSec: Double? = null
+        var prevAlt: Double? = null
 
-        for (i in rows.indices) {
-            val r = rows[i]
+        for (i in raw.indices) {
 
-            val rollDeg = when {
-                r.rollDeg != null -> r.rollDeg
-                (r.ay != null && r.az != null) -> Math.toDegrees(atan2(r.ay, r.az))
-                else -> 0.0
-            }
+            val r = raw[i]
+            val tSec = r.tSec - t0
+            val dtSec = prevTSec?.let { (tSec - it).coerceAtLeast(0.001) } ?: Double.NaN
 
-            val pitchHud = r.pitchDeg ?: 0.0
-
-            if (i == 0) {
-                val heading0 = r.yawDeg?.let { GeoMath.norm360(it) } ?: 0.0
-                out += FlightPoint(
-                    time = "0",
-                    latitude = r.lat,
-                    longitude = r.lon,
-                    altitude = r.alt,
-                    heading = heading0,
-                    pitch = pitchHud,
-                    roll = rollDeg,
-                    dtSec = Double.NaN,
-                    speedKmh = null,
-                    vsMps = null,
-                    yawDeg = heading0,
-                    timeSource = TimeSource.REAL_TIMESTAMP
-                )
-                continue
-            }
-
-            val prev = rows[i - 1]
-            val prevLL = LatLng(prev.lat, prev.lon)
-            val curLL = LatLng(r.lat, r.lon)
-
-            val distM = GeoMath.distanceMeters(prevLL, curLL)
-            val dt = r.tSec - prev.tSec
-
-            val dtOk = dt.isFinite() && dt >= 0.05
-            val moved = distM >= 3.0
-            val notTeleport = distM <= 80.0
-
-            val course = if (moved && notTeleport) GeoMath.headingDegrees(prevLL, curLL) else lastCourse
-            if (moved && notTeleport) lastCourse = course
-
-            val speedKmhVal = if (dtOk && moved && notTeleport) (distM / dt) * 3.6 else Double.NaN
-            val vs = if (dtOk) (r.alt - prev.alt) / dt else Double.NaN
-
-            val speedKmhFromFile = r.spdMps?.takeIf { it.isFinite() && it >= 0.0 }?.times(3.6)
-            val vsFromFile = r.vsMps?.takeIf { it.isFinite() }
-
-            val speedKmhFinal = speedKmhFromFile
-                ?: speedKmhVal.takeIf { it.isFinite() && it in 1.0..maxSpeedKmh }
-
-            val vsFinal = vsFromFile
-                ?: vs.takeIf { it.isFinite() && abs(it) <= maxVs }
-
-            val headingVal = r.yawDeg?.let { GeoMath.norm360(it) } ?: GeoMath.norm360(course)
+            val vsComputed =
+                if (prevTSec != null && prevAlt != null)
+                    ((r.altM - prevAlt!!) / (tSec - prevTSec!!)).takeIf { abs(it) < 50 }
+                else null
 
             out += FlightPoint(
-                time = i.toString(),
+                tSec = tSec,
+                dtSec = dtSec,
                 latitude = r.lat,
                 longitude = r.lon,
-                altitude = r.alt,
-                heading = headingVal,
-                pitch = pitchHud,
-                roll = rollDeg,
-                dtSec = dt,
-                speedKmh = speedKmhFinal,
-                vsMps = vsFinal,
-                yawDeg = headingVal,
-                timeSource = TimeSource.REAL_TIMESTAMP
+                altitudeM = r.altM,
+                speedMps = r.speedMps,
+                vsMps = r.vsMps ?: vsComputed,
+                pitchDeg = r.pitch,
+                rollDeg = r.roll,
+                yawDeg = r.yaw,
+                headingDeg = r.yaw,
+                source = LogType.GENERIC
             )
+
+            prevTSec = tSec
+            prevAlt = r.altM
         }
 
-        Log.i(TAG, "TXT/CSV parsed: points=${out.size}, header=${header.joinToString("|")}")
+        Log.i(TAG, "TXT/CSV parsed: points=${out.size}")
         return out
     }
 }
+

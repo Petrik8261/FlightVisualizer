@@ -64,6 +64,14 @@ class ImportActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_import)
+        findViewById<Button>(R.id.btnBackToDevice).setOnClickListener {
+            finish()   // vráti sa na výber zariadenia
+        }
+
+        findViewById<Button>(R.id.btnExitImport).setOnClickListener {
+            finishAffinity()
+        }
+
 
         // 1) obnov stav (ak existuje)
         if (savedInstanceState != null) {

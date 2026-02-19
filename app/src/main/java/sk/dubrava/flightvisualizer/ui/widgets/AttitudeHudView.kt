@@ -11,6 +11,7 @@ class AttitudeHudView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
+
     // --- Inputs ---
     var pitchDeg: Float = 0f
         set(v) { field = v; invalidate() }
