@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         )
 
         // scale efekt podľa zmeny ALT (pre lietadlo)
-        private const val BASE_MODEL_SCALE = 0.03f
+        private const val BASE_MODEL_SCALE = 0.07f
         private const val SCALE_EFFECT = 0.18f
         private const val SCALE_SMOOTH_ALPHA = 0.18f
         private const val ALT_DELTA_MAX_M = 3.0f
@@ -75,9 +75,32 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         private const val ALLOW_ESTIMATED_SPEED_FROM_KML_TOUR = false
 
+
+
+        // --- CAMERA PRESETS (3/4 view) ---
+        private val CAM_PLANE_BASE_POS = Position(0f, 4.3f, 6.8f)  // bolo 5.5 / 9.0
+        private val CAM_PLANE_BASE_ROT = Rotation(-32f, 0f, 0f)
+
+        private val CAM_DRONE_BASE_POS = Position(0f, 4.0f, 8.0f)  // bolo 5.0 / 12.0
+        private val CAM_DRONE_BASE_ROT = Rotation(-28f, 0f, 0f)
+
+
+        // Drone "zoom" efekt cez kameru (nie nafukovanie modelu)
+        private const val DRONE_CAM_ZOOM_EFFECT = 0.12f      // sila efektu
+        private const val DRONE_CAM_SMOOTH_ALPHA = 0.18f     // smoothing (0..1)
+        private const val DRONE_CAM_DELTA_MAX_M = 3.0f       // alt delta, kde efekt saturuje
+        private const val DRONE_CAM_Z_MIN = 5.5f
+        private const val DRONE_CAM_Z_MAX = 12.0f
+
+
         // Drone scale (konštantné)
-        private const val DRONE_SCALE = 0.12f
+        private const val DRONE_SCALE = 0.16f
+
     }
+
+    private var lastCamZ: Double = Double.NaN
+    private var lastCamAltitudeM: Double = Double.NaN
+
 
     private var googleMap: GoogleMap? = null
     private var flightPoints: List<FlightPoint> = emptyList()
@@ -439,6 +462,47 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             Scale(smoothedScale)
         }
 
+        // ------------------
+// DRONE: "zoom" efekt cez kameru pri stúpaní/klesaní
+// (model ostáva konštantný, hýbe sa kamera)
+// ------------------
+        if (vehicleType == AppNav.VEHICLE_DRONE) {
+            val cam = planeView.cameraNode
+
+            // init pri prvom frame
+            if (lastCamAltitudeM.isNaN()) {
+                lastCamAltitudeM = altM
+                lastCamZ = cam.position.z.toDouble()
+            }
+
+            val altDelta = (altM - lastCamAltitudeM).toFloat()
+            lastCamAltitudeM = altM
+
+            // climbFactor: -1..1
+            val climbFactor = (altDelta / DRONE_CAM_DELTA_MAX_M).coerceIn(-1f, 1f)
+
+            // Default: stúpanie = mierne oddialiť kameru (model menší), klesanie = priblížiť
+            val baseZ = (if (vehicleType == AppNav.VEHICLE_DRONE) CAM_DRONE_BASE_POS.z else CAM_PLANE_BASE_POS.z)
+            val targetZ = (baseZ * (1f + climbFactor * DRONE_CAM_ZOOM_EFFECT))
+                .coerceIn(DRONE_CAM_Z_MIN, DRONE_CAM_Z_MAX)
+
+            val zPrev = lastCamZ.toFloat()
+            val zNew = (zPrev + (targetZ - zPrev) * DRONE_CAM_SMOOTH_ALPHA)
+                .coerceIn(DRONE_CAM_Z_MIN, DRONE_CAM_Z_MAX)
+
+            lastCamZ = zNew.toDouble()
+
+            // aplikuj kameru (len Z, aby sa nemenil uhol pohľadu)
+            cam.position = Position(cam.position.x, cam.position.y, zNew)
+        }
+// Apply scale (gating)
+        if (!modelReady) {
+            pendingScale = finalScale
+        } else {
+            planeNode?.scale = finalScale
+        }
+
+
         if (!modelReady) {
             pendingRotation = finalRotation
             pendingScale = finalScale
@@ -592,6 +656,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     // 3D setup
     // -----------------------------
     private fun setup3DScene() {
+
+        val isDrone = (vehicleType == AppNav.VEHICLE_DRONE)
+
         planeView = findViewById(R.id.planeView)
 
         planeView.apply {
@@ -608,8 +675,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             view.blendMode = View.BlendMode.TRANSLUCENT
 
-            cameraNode.position = Position(0f, 6.0f, 0f)
-            cameraNode.rotation = Rotation(-90f, 0f, 0f)
+            // 3/4 pohľad – lepšie vidno pitch/roll/yaw
+
+            cameraNode.position = if (isDrone) CAM_DRONE_BASE_POS else CAM_PLANE_BASE_POS
+            cameraNode.rotation = if (isDrone) CAM_DRONE_BASE_ROT else CAM_PLANE_BASE_ROT
+
+// init pre drone camera-zoom (aby nebol skok)
+            lastCamZ = cameraNode.position.z.toDouble()
+            lastCamAltitudeM = Double.NaN
+
 
             setOnTouchListener { _, _ -> true }
         }
@@ -618,7 +692,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         pendingRotation = null
         pendingScale = null
 
-        val isDrone = (vehicleType == AppNav.VEHICLE_DRONE)
+
         val modelPath = if (isDrone) "models/drone.glb" else "models/airplane_lowpoly_final.glb"
 
         val baseRotation = Rotation(0f, 0f, 0f)
