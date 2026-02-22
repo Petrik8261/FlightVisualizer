@@ -12,30 +12,28 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import sk.dubrava.flightvisualizer.R
 import sk.dubrava.flightvisualizer.core.AppNav
-import sk.dubrava.flightvisualizer.ui.main.MainActivity
 import java.util.Locale
 
 class ImportActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "IMPORT"
+        private const val STATE_URI = "state_uri"
+        private const val STATE_VEHICLE = "state_vehicle"
     }
 
     private lateinit var btnPickFile: Button
-    private lateinit var btnOpenPlayer: Button
     private lateinit var btnClearSelection: Button
     private lateinit var tvSelectedFile: TextView
 
     private lateinit var vehicleType: String
     private var selectedUri: Uri? = null
 
-    // SAF picker
     private val pickFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
 
-        // Persistable permission (read)
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
@@ -43,7 +41,6 @@ class ImportActivity : AppCompatActivity() {
             )
         } catch (e: SecurityException) {
             Log.w(TAG, "takePersistableUriPermission failed: ${e.message}")
-            // nie je to fatálne - niektorí provideri to nepodporujú
         }
 
         val displayName = guessDisplayName(uri) ?: uri.toString()
@@ -52,40 +49,50 @@ class ImportActivity : AppCompatActivity() {
         if (!ok) {
             selectedUri = null
             tvSelectedFile.text = "(nepodporovaný súbor)"
-            setPlayerButtonEnabled(false)
             Toast.makeText(this, "Podporované súbory: .kml, .txt, .csv", Toast.LENGTH_LONG).show()
             return@registerForActivityResult
         }
 
         selectedUri = uri
         tvSelectedFile.text = displayName
-        setPlayerButtonEnabled(true)
+
+        // ✅ NOVÉ: po výbere hneď otvor Summary obrazovku
+        openSummary(uri, displayName)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_import)
 
-        // príde zo StartActivity
-        vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
+        findViewById<Button>(R.id.btnBackToDevice).setOnClickListener { finish() }
+        findViewById<Button>(R.id.btnExitImport).setOnClickListener { finishAffinity() }
+
+        if (savedInstanceState != null) {
+            vehicleType = savedInstanceState.getString(STATE_VEHICLE) ?: AppNav.VEHICLE_PLANE
+            selectedUri = savedInstanceState.getString(STATE_URI)?.let { Uri.parse(it) }
+        } else {
+            vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
+        }
 
         btnPickFile = findViewById(R.id.btnPickFile)
-        btnOpenPlayer = findViewById(R.id.btnOpenPlayer)
         btnClearSelection = findViewById(R.id.btnClearSelection)
         tvSelectedFile = findViewById(R.id.tvSelectedFile)
 
-        setPlayerButtonEnabled(false)
-        tvSelectedFile.text = "(žiadny)"
+        if (selectedUri != null) {
+            val name = guessDisplayName(selectedUri!!) ?: selectedUri.toString()
+            tvSelectedFile.text = name
+        } else {
+            tvSelectedFile.text = "(žiadny)"
+        }
 
         btnPickFile.setOnClickListener {
-            // MIME filter (nie je vždy 100% spoľahlivý, preto ešte validujeme príponu)
             pickFileLauncher.launch(
                 arrayOf(
-                    "application/vnd.google-earth.kml+xml", // .kml
-                    "text/plain",                           // .txt
-                    "text/csv",                             // .csv
+                    "application/vnd.google-earth.kml+xml",
+                    "text/plain",
+                    "text/csv",
                     "application/csv",
-                    "*/*"                                   // fallback pre providerov čo nepoznajú MIME
+                    "*/*"
                 )
             )
         }
@@ -93,31 +100,27 @@ class ImportActivity : AppCompatActivity() {
         btnClearSelection.setOnClickListener {
             selectedUri = null
             tvSelectedFile.text = "(žiadny)"
-            setPlayerButtonEnabled(false)
         }
 
-        btnOpenPlayer.setOnClickListener {
-            val uri = selectedUri
-            if (uri == null) {
-                Toast.makeText(this, "Najprv vyber súbor.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            val i = Intent(this, MainActivity::class.java).apply {
-                putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
-                putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(i)
-
-            // ak nechceš návrat späť na Import po Back:
-            // finish()
-        }
+        Log.i(TAG, "onCreate saved=${savedInstanceState != null} vehicleType=$vehicleType selectedUri=$selectedUri")
     }
 
-    private fun setPlayerButtonEnabled(enabled: Boolean) {
-        btnOpenPlayer.isEnabled = enabled
-        btnOpenPlayer.alpha = if (enabled) 1.0f else 0.5f
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_VEHICLE, vehicleType)
+        outState.putString(STATE_URI, selectedUri?.toString())
+    }
+
+    private fun openSummary(uri: Uri, displayName: String) {
+        val i = Intent(this, DataSummaryActivity::class.java).apply {
+            putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
+            putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
+            putExtra(DataSummaryActivity.EXTRA_FILENAME, displayName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(i)
+        // voliteľné: aby sa import už nevracal do hry s vybraným súborom
+        // finish()
     }
 
     private fun guessDisplayName(uri: Uri): String? {
@@ -140,7 +143,3 @@ class ImportActivity : AppCompatActivity() {
         return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
     }
 }
-
-
-
-

@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Scrollovateľný obsah -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:id="@+id/content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/tvTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Prehľad importu"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvFile"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Súbor: ..."
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Typ: ... • Body: ... • Trvanie: ..."
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvSection1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Boli získané tieto údaje"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <LinearLayout
+                android:id="@+id/boxSignals"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:background="@android:color/darker_gray">
+
+                <TextView android:id="@+id/tvCrs" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvHdg" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvSpeed" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvAlt" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvVs" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvPitch" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/tvRoll" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+                <TextView
+                    android:id="@+id/tvLegend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Legenda: ✅ dostupné • ⚠️ estimated • ❌ N/A"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvSection2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Poznámky"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/tvWarnings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Bez špeciálnych poznámok."
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvSection3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Režim prehrávania"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <RadioGroup
+                android:id="@+id/rgMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp">
+
+                <RadioButton
+                    android:id="@+id/rbRaw"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="RAW – iba dostupné dáta (chýbajúce = N/A)" />
+
+                <RadioButton
+                    android:id="@+id/rbAssisted"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ASSISTED – doplniť dopočítané údaje (presnosť závislá od kvality záznamu)" />
+            </RadioGroup>
+
+            <TextView
+                android:id="@+id/tvModeHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Estimated hodnoty budú vypočítané z dostupných údajov."
+                android:textSize="13sp" />
+
+            <!-- dno scroll obsahu - nech nie je prikryté panelom -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="12dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Pevný spodný panel -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnBack"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Späť" />
+
+            <Button
+                android:id="@+id/btnStart"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="Spustiť" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnExit"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:text="KONIEC"
+            android:textAllCaps="true"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#B00020" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -2,211 +2,128 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".ui.main.MainActivity">
+    android:background="@android:color/black">
 
-    <!-- MAPA - pozadie na celú obrazovku -->
-    <fragment
-        android:id="@+id/mapFragment"
-        android:name="com.google.android.gms.maps.SupportMapFragment"
+    <!-- TOOLBAR -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="0dp"
+        android:layout_height="40dp"
+        android:minHeight="40dp"
+        android:background="@android:color/black"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:contentInsetStart="0dp"
+        app:contentInsetEnd="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+
+    <!-- TOP PANEL: attitude + tapes -->
+    <FrameLayout
+        android:id="@+id/topPanel"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintBottom_toTopOf="@id/mapContainer"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHeight_percent="0.45">
 
-    <!-- 3D MODEL – overlay nad mapou -->
-    <io.github.sceneview.SceneView
-        android:id="@+id/planeView"
-        android:layout_width="240dp"
-        android:layout_height="240dp"
-        android:elevation="10dp"
-        android:background="@android:color/transparent"
+        <!-- Attitude HUD (canvas) -->
+        <sk.dubrava.flightvisualizer.ui.main.AttitudeHudView
+            android:id="@+id/attitudeView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-        app:layout_constraintTop_toTopOf="@id/mapFragment"
-        app:layout_constraintBottom_toBottomOf="@id/mapFragment"
-        app:layout_constraintStart_toStartOf="@id/mapFragment"
-        app:layout_constraintEnd_toEndOf="@id/mapFragment" />
+        </FrameLayout>
 
-
-
-
-
-    <!-- SLIDER -->
-    <SeekBar
-        android:id="@+id/playbackSeekBar"
+    <!-- MAP: väčšia -->
+    <FrameLayout
+        android:id="@+id/mapContainer"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="4dp"
-        app:layout_constraintBottom_toTopOf="@id/infoPanel"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/topPanel"
+        app:layout_constraintBottom_toTopOf="@id/playerBar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHeight_percent="0.40" />
 
-    <!-- HUD PANEL – tmavé pozadie, glass cockpit -->
+    <!-- PLAYER BAR: nižší, bez zbytočností -->
     <LinearLayout
-        android:id="@+id/infoPanel"
+        android:id="@+id/playerBar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="8dp"
-        android:background="#CC000000"
-        android:elevation="6dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="6dp"
+        android:background="#1A1A1A"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- OVLÁDANIE PREHRÁVANIA -->
+        <SeekBar
+            android:id="@+id/playbackSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
         <LinearLayout
-            android:id="@+id/playbackControls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp">
-
-            <Button
-                android:id="@+id/btnPlay"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="PLAY" />
-
-            <Button
-                android:id="@+id/btnStop"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="RESET" />
-
-            <Button
-                android:id="@+id/btnSpeed"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="1x" />
+            android:gravity="center"
+            android:paddingTop="6dp">
 
             <Button
                 android:id="@+id/btnStepBack"
-                android:layout_width="60dp"
-                android:layout_height="40dp"
-                android:text="⏮"
-                android:textSize="18sp"
-                app:layout_constraintTop_toTopOf="@+id/btnPlay"
-                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
-                app:layout_constraintEnd_toStartOf="@+id/btnPlay"
-                android:layout_marginEnd="8dp" />
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="56dp"
+                android:paddingHorizontal="10dp"
+                android:text="⏮"/>
+
+            <Button
+                android:id="@+id/btnPlay"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="72dp"
+                android:paddingHorizontal="14dp"
+                android:layout_marginStart="8dp"
+                android:text="PLAY"/>
+
+            <Button
+                android:id="@+id/btnStop"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="72dp"
+                android:paddingHorizontal="14dp"
+                android:layout_marginStart="8dp"
+                android:text="RESET"/>
 
             <Button
                 android:id="@+id/btnStepForward"
-                android:layout_width="60dp"
-                android:layout_height="40dp"
-                android:text="⏭"
-                android:textSize="18sp"
-                app:layout_constraintTop_toTopOf="@+id/btnPlay"
-                app:layout_constraintBottom_toBottomOf="@+id/btnPlay"
-                app:layout_constraintStart_toEndOf="@+id/btnPlay"
-                android:layout_marginStart="8dp" />
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="56dp"
+                android:paddingHorizontal="10dp"
+                android:layout_marginStart="8dp"
+                android:text="⏭"/>
 
 
         </LinearLayout>
 
-        <!-- PRVÝ RIADOK HUD: ALT, SPD, VS, HDG -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="4dp">
-
-            <TextView
-                android:id="@+id/tvAltitude"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="ALT: 0 m"
-                android:textColor="#A0FF00"
-                android:textStyle="bold"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/tvSpeed"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="SPD: 0 kt (0 km/h)"
-                android:textColor="#A0FF00"
-                android:textStyle="bold"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/tvVerticalSpeed"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="VS: 0 m/s"
-                android:textColor="#A0FF00"
-                android:textStyle="bold"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/tvHeading"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="HDG: 000°"
-                android:textColor="#A0FF00"
-                android:textStyle="bold"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <!-- DRUHÝ RIADOK HUD: Roll, Pitch, Yaw, G-force -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="2dp"
-            android:paddingBottom="6dp">
-
-            <TextView
-                android:id="@+id/tvPitchRoll"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:text="ROLL: 0° | PITCH: 0° | YAW: 0°"
-                android:textColor="#A0FF00"
-                android:textSize="12sp" />
-
-
-        </LinearLayout>
 
     </LinearLayout>
 
-    <!-- FAB – typ mapy -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/btnMapType"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:src="@android:drawable/ic_dialog_map"
-        android:contentDescription="Typ mapy"
-
-        android:layout_margin="16dp"
-        android:layout_marginBottom="8dp"
-
-        app:tint="@android:color/white"
-        app:backgroundTint="@android:color/holo_blue_dark"
-
-        app:layout_constraintBottom_toTopOf="@id/infoPanel"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-
-
 </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+
+
 
 
