@@ -4,25 +4,18 @@ import android.content.ContentResolver
 import android.net.Uri
 import com.google.android.gms.maps.model.LatLng
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
-import java.util.Locale
 
 class FlightHelper(
     private val contentResolver: ContentResolver
 ) {
 
     companion object {
-        private const val TAG = "FlightHelper"
     }
 
     private val loader = FlightLoader(contentResolver)
 
     fun loadFlight(uri: Uri, mode: DerivedMode): List<FlightPoint> {
         return loader.load(uri, mode)
-    }
-
-    private fun readFirstLine(uri: Uri): String {
-        val input = contentResolver.openInputStream(uri) ?: return ""
-        return input.bufferedReader().use { it.readLine() ?: "" }
     }
 
     fun buildRoute(points: List<FlightPoint>): List<LatLng> =
@@ -47,9 +40,5 @@ class FlightHelper(
         }
     }
 
-    fun isSupported(uri: Uri): Boolean {
-        val name = (guessFileName(uri) ?: "").lowercase(Locale.ROOT)
-        return name.endsWith(".csv")
-    }
 }
 

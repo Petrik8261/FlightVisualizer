@@ -97,16 +97,6 @@ class AttitudeHudView @JvmOverloads constructor(
         textSize = sp(16f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
-    private val pCompassTick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(220, 255, 255, 255)
-        strokeWidth = dp(2f)
-        strokeCap = Paint.Cap.ROUND
-    }
-
-    private val pCompassPointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(255, 193, 7) // amber
-        style = Paint.Style.FILL
-    }
 
 
     // smoothing

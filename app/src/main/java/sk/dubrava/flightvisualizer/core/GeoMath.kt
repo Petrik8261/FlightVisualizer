@@ -5,12 +5,6 @@ import kotlin.math.*
 
 object GeoMath {
 
-    fun norm360(d: Double): Double {
-        var x = d % 360.0
-        if (x < 0) x += 360.0
-        return x
-    }
-
     fun distanceMeters(a: LatLng, b: LatLng): Double {
         val R = 6371000.0
         val lat1 = Math.toRadians(a.latitude)

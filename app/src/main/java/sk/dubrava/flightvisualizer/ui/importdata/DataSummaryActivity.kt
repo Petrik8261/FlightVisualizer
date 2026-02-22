@@ -20,8 +20,6 @@ import sk.dubrava.flightvisualizer.data.model.LogType
 import sk.dubrava.flightvisualizer.ui.main.MainActivity
 import java.util.Locale
 import kotlin.math.max
-import com.google.android.gms.maps.model.LatLng
-import sk.dubrava.flightvisualizer.core.GeoMath
 
 class DataSummaryActivity : AppCompatActivity() {
 
@@ -262,21 +260,6 @@ class DataSummaryActivity : AppCompatActivity() {
         Avail.OK -> "✅"
         Avail.EST -> "⚠️"
         Avail.NA -> "❌"
-    }
-
-    private fun hasUsableTrack(points: List<FlightPoint>): Boolean {
-        if (points.size < 2) return false
-
-        val a = LatLng(points[0].latitude, points[0].longitude)
-
-        // stačí nájsť jeden bod, ktorý sa reálne pohol aspoň o 1 meter
-        val limit = minOf(points.size, 2000)
-        for (i in 1 until limit) {
-            val b = LatLng(points[i].latitude, points[i].longitude)
-            val d = GeoMath.distanceMeters(a, b)
-            if (d.isFinite() && d >= 1.0) return true
-        }
-        return false
     }
 
     private fun hasAnyTime(points: List<FlightPoint>): Boolean {
