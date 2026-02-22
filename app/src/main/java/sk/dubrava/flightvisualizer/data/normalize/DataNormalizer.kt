@@ -3,6 +3,7 @@ package sk.dubrava.flightvisualizer.data.normalize
 import com.google.android.gms.maps.model.LatLng
 import sk.dubrava.flightvisualizer.core.GeoMath
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
+import sk.dubrava.flightvisualizer.data.model.LogType
 import kotlin.math.abs
 
 object DataNormalizer {
@@ -24,7 +25,13 @@ object DataNormalizer {
         if (cleaned.size < 2) return cleaned
 
         val derived = computeDerived(cleaned)
-        return smoothHud(derived)
+
+        // ✅ Garmin avionics: bez HUD smoothingu (pitch/roll/yaw sú už telemetria)
+        return if (points.first().source == LogType.GARMIN_AVIONICS) {
+            derived
+        } else {
+            smoothHud(derived)
+        }
     }
 
     // -------------------------------------------------------
@@ -33,7 +40,6 @@ object DataNormalizer {
 
     private fun cleanGps(points: List<FlightPoint>): List<FlightPoint> {
         val out = mutableListOf<FlightPoint>()
-
         var last: FlightPoint? = null
 
         for (p in points) {
@@ -42,10 +48,18 @@ object DataNormalizer {
 
             if (last != null) {
                 val dist = GeoMath.distanceMeters(
-                    LatLng(last.latitude, last.longitude),
+                    LatLng(last!!.latitude, last!!.longitude),
                     LatLng(p.latitude, p.longitude)
                 )
-                if (!dist.isFinite() || dist > MAX_STEP_DIST_M) continue
+
+                if (!dist.isFinite()) continue
+
+                if (dist > MAX_STEP_DIST_M) {
+                    // ✅ namiesto zahodenia: začni nový "segment"
+                    out += p
+                    last = p
+                    continue
+                }
             }
 
             out += p
@@ -56,52 +70,167 @@ object DataNormalizer {
     }
 
     // -------------------------------------------------------
-    // 2️⃣ Derived values (yaw, speed fallback, vs clamp)
+    // 2️⃣ Derived values (yaw, speed fallback, vs clamp + MSFS VS regression)
     // -------------------------------------------------------
 
     private fun computeDerived(points: List<FlightPoint>): List<FlightPoint> {
-
         val out = mutableListOf<FlightPoint>()
         var lastYaw = 0.0
 
-        for (i in points.indices) {
+        // pre "window speed" (len pre GENERIC fallback)
+        var cumTime = 0.0
+        var anchorIndex = 0
+        var anchorTime = 0.0
 
+        fun dtOf(p: FlightPoint): Double? =
+            p.dtSec.takeIf { it.isFinite() && it > 0.0 }
+
+        // ✅ MSFS: ak log nemá vsMps, dopočítaj regresiou altitude vs time (okno ~3 s)
+        val isMsfs = points.firstOrNull()?.source == LogType.MSFS
+        val hasVsInLog = points.any { it.vsMps?.isFinite() == true }
+        val msfsVsRegression: DoubleArray? =
+            if (isMsfs && !hasVsInLog) estimateMsfsVsRegression(points, windowSec = 3.0) else null
+
+        for (i in points.indices) {
             val p = points[i]
 
             if (i == 0) {
-                out += p
+                // prvý bod len prepíš (VS prípadne doplníme aj tu)
+                val vs0 = p.vsMps?.takeIf { it.isFinite() && abs(it) <= MAX_VS_MPS }
+                    ?: msfsVsRegression?.getOrNull(0)?.takeIf { it.isFinite() && abs(it) <= MAX_VS_MPS }
+
+                out += p.copy(vsMps = vs0)
+                p.yawDeg?.let { lastYaw = it }
                 continue
             }
 
             val prev = points[i - 1]
-            val dt = p.dtSec.takeIf { it.isFinite() && it > 0 } ?: continue
+            val dt = dtOf(p) ?: continue
+            cumTime += dt
 
             val prevLL = LatLng(prev.latitude, prev.longitude)
             val curLL = LatLng(p.latitude, p.longitude)
-
             val dist = GeoMath.distanceMeters(prevLL, curLL)
 
+            // computed yaw z dráhy (iba fallback)
             val computedYaw =
-                if (dist >= MIN_MOVE_M)
+                if (dist.isFinite() && dist >= MIN_MOVE_M)
                     GeoMath.headingDegrees(prevLL, curLL)
                 else lastYaw
-
             lastYaw = computedYaw
 
-            val computedSpeed =
-                if (p.speedMps == null && dist.isFinite())
-                    (dist / dt).takeIf { it <= MAX_SPEED_MPS }
-                else p.speedMps
+            // VS clamp (ak existuje)
+            val vsClamped = p.vsMps?.takeIf { it.isFinite() && abs(it) <= MAX_VS_MPS }
 
-            val vsClamped =
-                p.vsMps?.takeIf { abs(it) <= MAX_VS_MPS }
+            // ✅ MSFS regression fallback (ak nemáme VS v logu)
+            val vsMsfs = msfsVsRegression?.getOrNull(i)
+                ?.takeIf { it.isFinite() && abs(it) <= MAX_VS_MPS }
+
+            // ---------------------------------------------------
+            // GARMIN_AVIONICS: žiadne výpočty yaw/speed z GPS.
+            // ---------------------------------------------------
+            if (p.source == LogType.GARMIN_AVIONICS) {
+                val yawOut = p.headingDeg ?: p.yawDeg ?: computedYaw
+                out += p.copy(
+                    yawDeg = yawOut,
+                    headingDeg = p.headingDeg ?: yawOut,
+                    speedMps = p.speedMps,
+                    vsMps = vsClamped // Garmin nechávame iba z telemetrie (žiadne dopočty)
+                )
+                continue
+            }
+
+            // ---------------------------------------------------
+            // OSTATNÉ ZDROJE: pôvodná logika
+            // ---------------------------------------------------
+            val speedOut: Double? = when (p.source) {
+                // telemetrické zdroje: nerob nič, len nechaj ich speed
+                LogType.MSFS, LogType.DRONE -> p.speedMps
+
+                // GENERIC (KML/TXT): ak nemá speed, dopočítaj z okna
+                else -> {
+                    if (p.speedMps != null) {
+                        p.speedMps
+                    } else {
+                        while (anchorIndex < i) {
+                            val nextTime = anchorTime + (dtOf(points[anchorIndex + 1]) ?: 0.0)
+                            if (cumTime - nextTime <= 1.0) break
+                            anchorIndex++
+                            anchorTime = nextTime
+                        }
+
+                        val anchor = points[anchorIndex]
+                        val anchorLL = LatLng(anchor.latitude, anchor.longitude)
+
+                        val winDist = GeoMath.distanceMeters(anchorLL, curLL)
+                        val winDt = (cumTime - anchorTime).coerceAtLeast(dt)
+
+                        (winDist / winDt).takeIf { it.isFinite() && it <= MAX_SPEED_MPS }
+                    }
+                }
+            }
 
             out += p.copy(
                 yawDeg = p.yawDeg ?: computedYaw,
                 headingDeg = p.headingDeg ?: computedYaw,
-                speedMps = computedSpeed,
-                vsMps = vsClamped
+                speedMps = speedOut,
+                // ✅ VS: preferuj log, inak MSFS regression (len keď bol zapnutý)
+                vsMps = vsClamped ?: vsMsfs
             )
+        }
+
+        return out
+    }
+
+    /**
+     * MSFS VS odhad regresiou altitudeM vs tSec v okne (typicky 3 s).
+     * Výstup: vsMps[i] alebo NaN, ak sa nedá spoľahlivo vypočítať.
+     */
+    private fun estimateMsfsVsRegression(points: List<FlightPoint>, windowSec: Double): DoubleArray {
+        val n = points.size
+        val out = DoubleArray(n) { Double.NaN }
+        if (n < 2) return out
+
+        for (end in 0 until n) {
+            val tEnd = points[end].tSec
+            if (!tEnd.isFinite()) continue
+
+            var i = end
+            var count = 0
+
+            var sumT = 0.0
+            var sumA = 0.0
+            var sumTT = 0.0
+            var sumTA = 0.0
+
+            while (i >= 0) {
+                val p = points[i]
+                val t = p.tSec
+                if (!t.isFinite()) break
+
+                val dt = tEnd - t
+                if (!dt.isFinite() || dt < 0.0) break
+
+                // drž okno dozadu, ale aspoň pár bodov
+                if (dt > windowSec && count >= 6) break
+
+                val a = p.altitudeM
+                sumT += t
+                sumA += a
+                sumTT += t * t
+                sumTA += t * a
+
+                count++
+                i--
+            }
+
+            if (count < 6) continue
+
+            val denom = (count * sumTT - sumT * sumT)
+            if (!denom.isFinite() || abs(denom) < 1e-9) continue
+
+            val slopeMps = (count * sumTA - sumT * sumA) / denom
+            if (slopeMps.isFinite()) out[end] = slopeMps
         }
 
         return out
@@ -112,11 +241,10 @@ object DataNormalizer {
     // -------------------------------------------------------
 
     private fun smoothHud(points: List<FlightPoint>): List<FlightPoint> {
-
         if (points.size < 2) return points
 
         var sSpeed = points.first().speedMps ?: 0.0
-        var sVs = points.first().vsMps ?: 0.0
+        var sVs: Double? = points.first().vsMps
         var sYaw = points.first().yawDeg ?: 0.0
         var sPitch = points.first().pitchDeg
         var sRoll = points.first().rollDeg
@@ -125,17 +253,35 @@ object DataNormalizer {
 
         for (p in points) {
 
-            p.speedMps?.let { sSpeed = ema(sSpeed, it, ALPHA_SPEED) }
-            p.vsMps?.let { sVs = ema(sVs, it, ALPHA_VS) }
-
-            p.yawDeg?.let { sYaw = emaAngle(sYaw, it, ALPHA_YAW) }
-
-            p.pitchDeg?.let {
-                sPitch = if (sPitch != null) ema(sPitch!!, it, ALPHA_ATT) else it
+            // SPEED
+            p.speedMps?.let { speed ->
+                sSpeed = ema(sSpeed, speed, ALPHA_SPEED)
             }
 
-            p.rollDeg?.let {
-                sRoll = if (sRoll != null) ema(sRoll!!, it, ALPHA_ATT) else it
+            // VS
+            // ✅ Pre MSFS nechaj VS tak (už je z regresie a v MainActivity ešte stabilizuješ),
+            // aby nebola dvojitá filtrácia.
+            if (p.source == LogType.MSFS) {
+                sVs = p.vsMps ?: sVs
+            } else {
+                p.vsMps?.let { vsValue ->
+                    sVs = if (sVs != null) ema(sVs!!, vsValue, ALPHA_VS) else vsValue
+                }
+            }
+
+            // YAW
+            p.yawDeg?.let { yawValue ->
+                sYaw = emaAngle(sYaw, yawValue, ALPHA_YAW)
+            }
+
+            // PITCH
+            p.pitchDeg?.let { pitchValue ->
+                sPitch = if (sPitch != null) ema(sPitch!!, pitchValue, ALPHA_ATT) else pitchValue
+            }
+
+            // ROLL
+            p.rollDeg?.let { rollValue ->
+                sRoll = if (sRoll != null) ema(sRoll!!, rollValue, ALPHA_ATT) else rollValue
             }
 
             out += p.copy(
@@ -163,7 +309,3 @@ object DataNormalizer {
         return (prev + alpha * diff + 360.0) % 360.0
     }
 }
-
-
-
-

@@ -18,7 +18,14 @@ data class FlightPoint(
     val source: LogType
 )
 
-enum class LogType { MSFS, DRONE, GENERIC }
+enum class LogType {
+    MSFS,
+    DRONE,
+    KML,
+    ARDUINO_TXT,
+    GENERIC,
+    GARMIN_AVIONICS
+}
 
 
 

@@ -103,7 +103,7 @@
                 android:minWidth="72dp"
                 android:paddingHorizontal="14dp"
                 android:layout_marginStart="8dp"
-                android:text="STOP"/>
+                android:text="RESET"/>
 
             <Button
                 android:id="@+id/btnStepForward"

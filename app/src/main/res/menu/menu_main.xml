@@ -3,12 +3,12 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
         android:id="@+id/action_back"
-        android:title="Krok späť"
+        android:title="Späť"
         app:showAsAction="never" />
 
     <item
         android:id="@+id/action_home"
-        android:title="Domov"
+        android:title="Úvodná obrazovka"
         app:showAsAction="never" />
 </menu>
 

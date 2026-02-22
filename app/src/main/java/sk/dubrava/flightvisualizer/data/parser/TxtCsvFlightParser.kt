@@ -1,14 +1,12 @@
-package sk.dubrava.flightvisualizer.core
+package sk.dubrava.flightvisualizer.data.parser
 
 import android.content.ContentResolver
 import android.net.Uri
 import android.util.Log
-import com.google.android.gms.maps.model.LatLng
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
 import sk.dubrava.flightvisualizer.data.model.LogType
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.atan2
 
 class TxtCsvFlightParser(
     private val contentResolver: ContentResolver

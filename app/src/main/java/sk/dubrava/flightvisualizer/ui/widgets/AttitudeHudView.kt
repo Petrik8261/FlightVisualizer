@@ -22,20 +22,27 @@ class AttitudeHudView @JvmOverloads constructor(
     var headingDeg: Float = 0f
         set(v) { field = norm360(v); invalidate() }
 
+    // If true, invert pitch/roll sign for display (pre vybrané logy, napr. Garmin)
+    var invertAttitude: Boolean = false
+        set(v) { field = v; invalidate() }
+
     // Aviation preferred
     var speedKts: Float? = null
-        set(v) { field = v; invalidate() }
+        set(v) { field = v?.takeIf { it.isFinite() }; invalidate() }
 
     var altitudeFt: Float? = null
-        set(v) { field = v; invalidate() }
-
-    var vsFpm: Float? = null
-        set(v) { field = v; invalidate() }
+        set(v) { field = v?.takeIf { it.isFinite() }; invalidate() }
 
     var crsDeg: Float? = null
-        set(v) { field = v; invalidate() }
+        set(v) { field = v?.takeIf { it.isFinite() }; invalidate() }
 
-    // --- Style tuning ---
+    var vsFpm: Float? = null
+        set(v) {
+            field = v?.takeIf { it.isFinite() }
+            invalidate()
+        }
+
+   // --- Style tuning ---
     private val pSky = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(18, 95, 190) }
     private val pGround = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(155, 98, 30) }
 
@@ -120,8 +127,11 @@ class AttitudeHudView @JvmOverloads constructor(
         val dtSec = if (lastFrameMs == 0L) 0f else ((now - lastFrameMs).coerceAtMost(50L)) / 1000f
         lastFrameMs = now
 
-        val targetPitch = pitchDeg.coerceIn(-20f, 20f)
-        val targetRoll = rollDeg.coerceIn(-89f, 89f)
+        val pIn = if (invertAttitude) -pitchDeg else pitchDeg
+        val rIn = if (invertAttitude) -rollDeg else rollDeg
+
+        val targetPitch = pIn.coerceIn(-20f, 20f)
+        val targetRoll = rIn.coerceIn(-89f, 89f)
 
         val tauPitch = 0.18f
         val tauRoll = 0.14f

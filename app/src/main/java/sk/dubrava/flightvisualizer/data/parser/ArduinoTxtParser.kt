@@ -1,4 +1,4 @@
-package sk.dubrava.flightvisualizer.core
+package sk.dubrava.flightvisualizer.data.parser
 
 import android.content.ContentResolver
 import android.net.Uri
@@ -102,7 +102,7 @@ class ArduinoTxtParser(
                 lon = lon,
                 altM = altM,
                 pitchDeg = pitchDeg,
-                rollDeg = rollDeg
+                rollDeg = rollDeg?.let { -it }
             )
         }
 
@@ -137,7 +137,7 @@ class ArduinoTxtParser(
                 rollDeg = r.rollDeg,
                 yawDeg = null,            // nemáme
                 headingDeg = null,        // nemáme
-                source = LogType.GENERIC  // alebo LogType.ARDUINO ak si ho pridáš
+                source = LogType.ARDUINO_TXT
             )
 
             prevTSec = tSec

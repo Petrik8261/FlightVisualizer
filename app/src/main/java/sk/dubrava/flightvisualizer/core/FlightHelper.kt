@@ -16,10 +16,9 @@ class FlightHelper(
 
     private val loader = FlightLoader(contentResolver)
 
-    fun loadFlight(uri: Uri): List<FlightPoint> {
-        return loader.load(uri)
+    fun loadFlight(uri: Uri, mode: DerivedMode): List<FlightPoint> {
+        return loader.load(uri, mode)
     }
-
 
     private fun readFirstLine(uri: Uri): String {
         val input = contentResolver.openInputStream(uri) ?: return ""

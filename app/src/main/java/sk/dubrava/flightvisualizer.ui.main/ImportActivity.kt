@@ -12,7 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import sk.dubrava.flightvisualizer.R
 import sk.dubrava.flightvisualizer.core.AppNav
-import sk.dubrava.flightvisualizer.ui.main.MainActivity
 import java.util.Locale
 
 class ImportActivity : AppCompatActivity() {
@@ -24,7 +23,6 @@ class ImportActivity : AppCompatActivity() {
     }
 
     private lateinit var btnPickFile: Button
-    private lateinit var btnOpenPlayer: Button
     private lateinit var btnClearSelection: Button
     private lateinit var tvSelectedFile: TextView
 
@@ -51,50 +49,40 @@ class ImportActivity : AppCompatActivity() {
         if (!ok) {
             selectedUri = null
             tvSelectedFile.text = "(nepodporovaný súbor)"
-            setPlayerButtonEnabled(false)
             Toast.makeText(this, "Podporované súbory: .kml, .txt, .csv", Toast.LENGTH_LONG).show()
             return@registerForActivityResult
         }
 
         selectedUri = uri
         tvSelectedFile.text = displayName
-        setPlayerButtonEnabled(true)
+
+        // ✅ NOVÉ: po výbere hneď otvor Summary obrazovku
+        openSummary(uri, displayName)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_import)
-        findViewById<Button>(R.id.btnBackToDevice).setOnClickListener {
-            finish()   // vráti sa na výber zariadenia
-        }
 
-        findViewById<Button>(R.id.btnExitImport).setOnClickListener {
-            finishAffinity()
-        }
+        findViewById<Button>(R.id.btnBackToDevice).setOnClickListener { finish() }
+        findViewById<Button>(R.id.btnExitImport).setOnClickListener { finishAffinity() }
 
-
-        // 1) obnov stav (ak existuje)
         if (savedInstanceState != null) {
             vehicleType = savedInstanceState.getString(STATE_VEHICLE) ?: AppNav.VEHICLE_PLANE
             selectedUri = savedInstanceState.getString(STATE_URI)?.let { Uri.parse(it) }
         } else {
-            // 2) prvý štart - z intentu
             vehicleType = intent.getStringExtra(AppNav.EXTRA_VEHICLE_TYPE) ?: AppNav.VEHICLE_PLANE
         }
 
         btnPickFile = findViewById(R.id.btnPickFile)
-        btnOpenPlayer = findViewById(R.id.btnOpenPlayer)
         btnClearSelection = findViewById(R.id.btnClearSelection)
         tvSelectedFile = findViewById(R.id.tvSelectedFile)
 
-        // nastav UI podľa toho, či už máme URI
         if (selectedUri != null) {
             val name = guessDisplayName(selectedUri!!) ?: selectedUri.toString()
             tvSelectedFile.text = name
-            setPlayerButtonEnabled(true)
         } else {
             tvSelectedFile.text = "(žiadny)"
-            setPlayerButtonEnabled(false)
         }
 
         btnPickFile.setOnClickListener {
@@ -112,22 +100,6 @@ class ImportActivity : AppCompatActivity() {
         btnClearSelection.setOnClickListener {
             selectedUri = null
             tvSelectedFile.text = "(žiadny)"
-            setPlayerButtonEnabled(false)
-        }
-
-        btnOpenPlayer.setOnClickListener {
-            val uri = selectedUri
-            if (uri == null) {
-                Toast.makeText(this, "Najprv vyber súbor.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            val i = Intent(this, MainActivity::class.java).apply {
-                putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
-                putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(i)
         }
 
         Log.i(TAG, "onCreate saved=${savedInstanceState != null} vehicleType=$vehicleType selectedUri=$selectedUri")
@@ -139,9 +111,16 @@ class ImportActivity : AppCompatActivity() {
         outState.putString(STATE_URI, selectedUri?.toString())
     }
 
-    private fun setPlayerButtonEnabled(enabled: Boolean) {
-        btnOpenPlayer.isEnabled = enabled
-        btnOpenPlayer.alpha = if (enabled) 1.0f else 0.5f
+    private fun openSummary(uri: Uri, displayName: String) {
+        val i = Intent(this, DataSummaryActivity::class.java).apply {
+            putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
+            putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
+            putExtra(DataSummaryActivity.EXTRA_FILENAME, displayName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(i)
+        // voliteľné: aby sa import už nevracal do hry s vybraným súborom
+        // finish()
     }
 
     private fun guessDisplayName(uri: Uri): String? {
@@ -164,8 +143,3 @@ class ImportActivity : AppCompatActivity() {
         return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
     }
 }
-
-
-
-
-
