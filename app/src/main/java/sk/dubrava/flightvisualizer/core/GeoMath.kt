@@ -1,7 +1,10 @@
 package sk.dubrava.flightvisualizer.core
 
 import com.google.android.gms.maps.model.LatLng
-import kotlin.math.*
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 object GeoMath {
 

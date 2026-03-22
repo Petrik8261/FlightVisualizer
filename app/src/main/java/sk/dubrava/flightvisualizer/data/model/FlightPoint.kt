@@ -7,13 +7,13 @@ data class FlightPoint(
     val longitude: Double,
     val altitudeM: Double,
 
-    val speedMps: Double?,     // nullable ak nie je
-    val vsMps: Double?,        // nullable ak nie je
+    val speedMps: Double?,
+    val vsMps: Double?,
 
-    val pitchDeg: Double?,     // deg
-    val rollDeg: Double?,      // deg
-    val yawDeg: Double?,       // deg (heading/yaw)
-    val headingDeg: Double?,   // voliteľne ak chceš odlíšiť heading vs yaw
+    val pitchDeg: Double?,
+    val rollDeg: Double?,
+    val yawDeg: Double?,
+    val headingDeg: Double?,
 
     val source: LogType
 )

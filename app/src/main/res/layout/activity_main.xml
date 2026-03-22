@@ -2,12 +2,12 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
-    <!-- TOOLBAR -->
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
         android:layout_width="0dp"
@@ -21,8 +21,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-
-    <!-- TOP PANEL: attitude + tapes -->
     <FrameLayout
         android:id="@+id/topPanel"
         android:layout_width="0dp"
@@ -33,15 +31,13 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHeight_percent="0.45">
 
-        <!-- Attitude HUD (canvas) -->
-        <sk.dubrava.flightvisualizer.ui.main.AttitudeHudView
+        <sk.dubrava.flightvisualizer.ui.widgets.AttitudeHudView
             android:id="@+id/attitudeView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        </FrameLayout>
+    </FrameLayout>
 
-    <!-- MAP: väčšia -->
     <FrameLayout
         android:id="@+id/mapContainer"
         android:layout_width="0dp"
@@ -52,7 +48,6 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHeight_percent="0.40" />
 
-    <!-- PLAYER BAR: nižší, bez zbytočností -->
     <LinearLayout
         android:id="@+id/playerBar"
         android:layout_width="0dp"
@@ -70,7 +65,7 @@
         <SeekBar
             android:id="@+id/playbackSeekBar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"/>
+            android:layout_height="wrap_content" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -82,48 +77,48 @@
             <Button
                 android:id="@+id/btnStepBack"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="48dp"
                 android:minWidth="56dp"
+                android:minHeight="48dp"
                 android:paddingHorizontal="10dp"
-                android:text="⏮"/>
+                android:text="⏮"
+                tools:ignore="HardcodedText" />
 
             <Button
                 android:id="@+id/btnPlay"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="48dp"
                 android:minWidth="72dp"
+                android:minHeight="48dp"
                 android:paddingHorizontal="14dp"
                 android:layout_marginStart="8dp"
-                android:text="PLAY"/>
+                android:text="Play"
+                tools:ignore="HardcodedText" />
 
             <Button
                 android:id="@+id/btnStop"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="48dp"
                 android:minWidth="72dp"
+                android:minHeight="48dp"
                 android:paddingHorizontal="14dp"
                 android:layout_marginStart="8dp"
-                android:text="RESET"/>
+                android:text="Reset"
+                tools:ignore="HardcodedText" />
 
             <Button
                 android:id="@+id/btnStepForward"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="48dp"
                 android:minWidth="56dp"
+                android:minHeight="48dp"
                 android:paddingHorizontal="10dp"
                 android:layout_marginStart="8dp"
-                android:text="⏭"/>
-
+                android:text="⏭"
+                tools:ignore="HardcodedText" />
 
         </LinearLayout>
-
 
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
-
-
-
-
-
-

@@ -15,12 +15,21 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Tolerantný parser pre Garmin avionické CSV (G1000 / G3X).
+ * Parser pre Garmin avionické CSV záznamy (G1000 / G3X Touch).
  *
- * - preskočí prologue riadky
- * - nájde hlavičku automaticky
- * - mapuje rôzne názvy stĺpcov na jednotné polia
- * - vie vrátiť RAW body aj priamo FlightPoint (štýl ako ostatné parsery)
+ * Štruktúra G1000 CSV:
+ *   Riadok 1: informácie o lietadle (preskočíme)
+ *   Riadok 2: hlavička stĺpcov
+ *   Riadok 3: jednotky (ft, kt, fpm, deg) — detekujeme a preskočíme
+ *   Riadok 4+: dáta, 1 Hz
+ *
+ * Kľúčové mapovanie:
+ *   HDG   → magnetický smer nosa z AHRS
+ *   TRK   → GPS track (smer pohybu nad zemou)
+ *   VSpd  → barometrická VS (preferovaná)
+ *   VSpdG → GPS VS (fallback ak VSpd chýba)
+ *   AltB  → barometrická výška (prioritná), AltMSL/AltGPS ako fallback
+ *   CRS   sa zámerne ignoruje — je to HSI selected course, nie GPS track
  */
 class GarminAvionicsCsvParser(
     private val contentResolver: ContentResolver
@@ -31,9 +40,9 @@ class GarminAvionicsCsvParser(
         private const val MAX_SCAN_LINES_FOR_HEADER = 80
 
         private const val MAX_ABS_PITCH_DEG = 90.0
-        private const val MAX_ABS_ROLL_DEG = 180.0
-        private const val MAX_ABS_VS_FTPM = 10000.0 // ft/min
-        private const val MAX_GS_KT = 600.0
+        private const val MAX_ABS_ROLL_DEG  = 180.0
+        private const val MAX_ABS_VS_FTPM   = 10_000.0
+        private const val MAX_GS_KT         = 600.0
     }
 
     data class FlightPointRaw(
@@ -52,60 +61,41 @@ class GarminAvionicsCsvParser(
         val sourceLine: Int
     )
 
-    /**
-     * ✅ Štandardný vstup ako ostatné parsery v projekte
-     */
     fun parse(uri: Uri): List<FlightPoint> {
         val input = contentResolver.openInputStream(uri) ?: return emptyList()
         return input.use {
-            parseToFlightPoints(
-                input = it,
-                preferIasOverGs = true,
-                fallbackDtSec = 1.0,
-                source = LogType.GARMIN_AVIONICS
-            )
+            parseToFlightPoints(input = it, preferIasOverGs = true, fallbackDtSec = 1.0, source = LogType.GARMIN_AVIONICS)
         }
     }
 
-    /**
-     * RAW parse (ponechané kvôli debug/analýze)
-     */
     fun parse(input: InputStream): List<FlightPointRaw> {
         BufferedReader(InputStreamReader(input)).use { br ->
             val allLines = mutableListOf<String>()
             var line: String?
-            while (true) {
-                line = br.readLine() ?: break
-                allLines.add(line)
-            }
+            while (true) { line = br.readLine() ?: break; allLines.add(line) }
             if (allLines.isEmpty()) return emptyList()
 
-            // delimiter: podpor "sep=;" a zároveň sniff
-            val delimiter = detectDelimiterAndMaybeSkipSep(allLines)
-
+            val delimiter = detectDelimiter(allLines)
             val (headerIndex, headerCells) = findHeader(allLines, delimiter)
+
             if (headerIndex < 0) {
                 Log.w(TAG, "Header not found.")
                 return emptyList()
             }
 
-            val columnIndex = buildColumnIndex(headerCells)
+            val unitsRowIndex = detectUnitsRow(allLines, headerIndex, headerCells, delimiter)
+            val columnIndex   = buildColumnIndex(headerCells)
+            val out           = ArrayList<FlightPointRaw>(allLines.size.coerceAtMost(50_000))
 
-            val out = ArrayList<FlightPointRaw>(allLines.size.coerceAtMost(50_000))
             for (i in headerIndex + 1 until allLines.size) {
+                if (i == unitsRowIndex) continue
                 val raw = allLines[i].trim()
-                if (raw.isEmpty()) continue
-                if (raw.startsWith("sep=", ignoreCase = true)) continue
+                if (raw.isEmpty() || raw.startsWith("sep=", ignoreCase = true)) continue
 
                 val cells = splitCsvLine(raw, delimiter)
                 if (cells.isEmpty()) continue
 
-                val p = parseRow(
-                    cells = cells,
-                    col = columnIndex,
-                    sourceLine = i + 1
-                ) ?: continue
-
+                val p = parseRow(cells, columnIndex, i + 1) ?: continue
                 out.add(p)
             }
 
@@ -113,74 +103,85 @@ class GarminAvionicsCsvParser(
         }
     }
 
-    // ---------- delimiter detection ----------
-
-    private fun detectDelimiterAndMaybeSkipSep(lines: List<String>): Char {
-        // ak je hneď prvý meaningful riadok "sep=;", použi ho
+    private fun detectDelimiter(lines: List<String>): Char {
         for (i in 0 until minOf(lines.size, 3)) {
             val t = lines[i].trim()
             if (t.isEmpty()) continue
-            if (t.startsWith("sep=", ignoreCase = true)) {
+            if (t.startsWith("sep=", ignoreCase = true))
                 return t.substringAfter("sep=").firstOrNull() ?: ','
-            }
             break
         }
-
-        // inak sniff na prvých pár riadkoch
         val sample = lines.take(10).firstOrNull { it.isNotBlank() } ?: return ','
-        val candidates = listOf(',', ';', '\t', '|')
-        return candidates.maxBy { c -> sample.count { it == c } }
+        return listOf(',', ';', '\t', '|').maxBy { c -> sample.count { it == c } }
     }
 
-    // ---------- Header detection ----------
-
     private fun findHeader(lines: List<String>, delimiter: Char): Pair<Int, List<String>> {
-        val scanMax = minOf(lines.size, MAX_SCAN_LINES_FOR_HEADER)
-        var bestIdx = -1
+        val scanMax   = minOf(lines.size, MAX_SCAN_LINES_FOR_HEADER)
+        var bestIdx   = -1
         var bestScore = -1
-        var bestCells: List<String> = emptyList()
+        var bestCells = emptyList<String>()
 
         for (i in 0 until scanMax) {
             val row = lines[i].trim()
-            if (row.isEmpty()) continue
-            if (row.startsWith("sep=", ignoreCase = true)) continue
+            if (row.isEmpty() || row.startsWith("sep=", ignoreCase = true)) continue
 
             val cells = splitCsvLine(row, delimiter)
             if (cells.size < 3) continue
 
-            val norm = cells.map { normalizeHeader(it) }
-            val score = headerScore(norm)
-
+            val score = headerScore(cells.map { normalizeHeader(it) })
             if (score > bestScore) {
-                bestScore = score
-                bestIdx = i
-                bestCells = cells
+                bestScore = score; bestIdx = i; bestCells = cells
             }
-
             if (score >= 6) break
         }
 
-        Log.i(TAG, "Header candidate at line=${bestIdx + 1}, score=$bestScore, cells=${bestCells.size}, delim='$delimiter'")
+        Log.i(TAG, "Header at line=${bestIdx + 1}, score=$bestScore, cols=${bestCells.size}, delim='$delimiter'")
         return bestIdx to bestCells
+    }
+
+    /**
+     * Detekuje units riadok G1000/G3X (hneď za hlavičkou).
+     * Ak bunky na pozíciách lat/lon nie sú čísla (napr. obsahujú "deg"), považuje riadok za units.
+     */
+    private fun detectUnitsRow(
+        lines: List<String>,
+        headerIndex: Int,
+        headerCells: List<String>,
+        delimiter: Char
+    ): Int {
+        val candidateIdx = headerIndex + 1
+        if (candidateIdx >= lines.size) return -1
+
+        val row = lines[candidateIdx].trim()
+        if (row.isEmpty()) return -1
+
+        val cells    = splitCsvLine(row, delimiter)
+        val colIndex = buildColumnIndex(headerCells)
+        val latIdx   = colIndex.byField[Field.LAT]
+        val lonIdx   = colIndex.byField[Field.LON]
+
+        val latCell = latIdx?.let { if (it < cells.size) cells[it].trim() else null }
+        val lonCell = lonIdx?.let { if (it < cells.size) cells[it].trim() else null }
+
+        val latIsNumeric = latCell?.replace(",", ".")?.toDoubleOrNull() != null
+        val lonIsNumeric = lonCell?.replace(",", ".")?.toDoubleOrNull() != null
+
+        return if (!latIsNumeric && !lonIsNumeric) {
+            Log.i(TAG, "Units row detected at line=${candidateIdx + 1}: lat='$latCell', lon='$lonCell'")
+            candidateIdx
+        } else -1
     }
 
     private fun headerScore(normHeaders: List<String>): Int {
         val want = setOf(
-            "latitude", "lat",
-            "longitude", "lon", "long",
-            "pitch", "roll",
-            "hdg", "heading",
-            "trk", "track", "course",
+            "latitude", "lat", "longitude", "lon", "long",
+            "pitch", "roll", "hdg", "heading", "trk", "track", "course",
             "ias", "tas", "gndspd", "gs", "groundspeed", "gspd",
-            "vspd", "verticalspeed", "vertical_speed", "vs",
+            "vspd", "verticalspeed", "vertical_speed", "vs", "vspdg",
             "altb", "altmsl", "altgps", "altitude", "baroalt", "alt"
         )
-        var s = 0
-        for (h in normHeaders) if (h in want) s++
-        return s
+        return normHeaders.count { it in want }
     }
-
-    // ---------- Column mapping ----------
 
     private data class ColIndex(val byField: Map<Field, Int>)
 
@@ -188,8 +189,7 @@ class GarminAvionicsCsvParser(
         DATE, TIME, UTC_OFFSET, UTC_TIME, TIMESTAMP,
         LAT, LON,
         ALT_MSL, ALT_GPS, ALT_BARO, ALT_GENERIC,
-        GS, IAS, TAS,
-        VS,
+        GS, IAS, TAS, VS,
         HEADING, TRACK,
         PITCH, ROLL
     }
@@ -199,48 +199,37 @@ class GarminAvionicsCsvParser(
 
         headerCells.forEachIndexed { idx, raw ->
             val h = normalizeHeader(raw)
-
-            // čas
             when (h) {
-                "lcldate", "date", "localdate" -> map.putIfAbsent(Field.DATE, idx)
-                "lcltime", "time", "localtime" -> map.putIfAbsent(Field.TIME, idx)
+                "lcldate", "date", "localdate"                            -> map.putIfAbsent(Field.DATE, idx)
+                "lcltime", "time", "localtime"                            -> map.putIfAbsent(Field.TIME, idx)
                 "utcofst", "utcoffset", "utc_offset", "utcplus", "utcoff" -> map.putIfAbsent(Field.UTC_OFFSET, idx)
-                "utc", "utctime" -> map.putIfAbsent(Field.UTC_TIME, idx)
-                "timestamp", "timeutc", "epochtime", "unix" -> map.putIfAbsent(Field.TIMESTAMP, idx)
-            }
+                "utc", "utctime"                                          -> map.putIfAbsent(Field.UTC_TIME, idx)
+                "timestamp", "timeutc", "epochtime", "unix"               -> map.putIfAbsent(Field.TIMESTAMP, idx)
 
-            // poloha
-            when (h) {
-                "latitude", "lat" -> map.putIfAbsent(Field.LAT, idx)
-                "longitude", "lon", "long" -> map.putIfAbsent(Field.LON, idx)
-            }
+                "latitude", "lat"                                         -> map.putIfAbsent(Field.LAT, idx)
+                "longitude", "lon", "long"                                -> map.putIfAbsent(Field.LON, idx)
 
-            // altitude
-            when (h) {
-                "altmsl", "mslalt", "alt_msl" -> map.putIfAbsent(Field.ALT_MSL, idx)
-                "altgps", "gpsalt", "alt_gps" -> map.putIfAbsent(Field.ALT_GPS, idx)
+                // priorita výšky: barometrická > MSL > GPS > generická
                 "altb", "baroalt", "altbaro", "alt_baro", "altitude_baro" -> map.putIfAbsent(Field.ALT_BARO, idx)
-                "altitude", "alt" -> map.putIfAbsent(Field.ALT_GENERIC, idx)
-            }
+                "altmsl", "mslalt", "alt_msl"                             -> map.putIfAbsent(Field.ALT_MSL, idx)
+                "altgps", "gpsalt", "alt_gps"                             -> map.putIfAbsent(Field.ALT_GPS, idx)
+                "altitude", "alt"                                         -> map.putIfAbsent(Field.ALT_GENERIC, idx)
 
-            // speeds
-            when (h) {
-                "gndspd", "groundspeed", "gs", "gspd" -> map.putIfAbsent(Field.GS, idx)
-                "ias" -> map.putIfAbsent(Field.IAS, idx)
-                "tas" -> map.putIfAbsent(Field.TAS, idx)
-            }
+                "gndspd", "groundspeed", "gs", "gspd"                    -> map.putIfAbsent(Field.GS, idx)
+                "ias"                                                     -> map.putIfAbsent(Field.IAS, idx)
+                "tas"                                                     -> map.putIfAbsent(Field.TAS, idx)
 
-            // vertical speed
-            when (h) {
-                "vspd", "verticalspeed", "vertical_speed", "vs" -> map.putIfAbsent(Field.VS, idx)
-            }
+                // VSpd = barometrická VS, VSpdG = GPS VS (fallback)
+                // putIfAbsent zabezpečí prednosť VSpd pred VSpdG
+                "vspd", "verticalspeed", "vertical_speed", "vs",
+                "vspdg"                                                   -> map.putIfAbsent(Field.VS, idx)
 
-            // attitude / direction
-            when (h) {
-                "hdg", "heading" -> map.putIfAbsent(Field.HEADING, idx)
-                "trk", "track", "course" -> map.putIfAbsent(Field.TRACK, idx)
-                "pitch" -> map.putIfAbsent(Field.PITCH, idx)
-                "roll" -> map.putIfAbsent(Field.ROLL, idx)
+                // CRS (HSI selected course) sa zámerne ignoruje
+                "hdg", "heading"                                          -> map.putIfAbsent(Field.HEADING, idx)
+                "trk", "track", "course"                                  -> map.putIfAbsent(Field.TRACK, idx)
+
+                "pitch"                                                   -> map.putIfAbsent(Field.PITCH, idx)
+                "roll"                                                    -> map.putIfAbsent(Field.ROLL, idx)
             }
         }
 
@@ -248,25 +237,16 @@ class GarminAvionicsCsvParser(
         return ColIndex(map.toMap())
     }
 
-    private fun normalizeHeader(s: String): String {
-        return s.trim()
-            .lowercase()
+    private fun normalizeHeader(s: String): String =
+        s.trim().lowercase()
             .replace("\uFEFF", "")
             .replace("°", "")
-            .replace("(deg)", "")
-            .replace("(degrees)", "")
-            .replace("(kt)", "")
-            .replace("(kts)", "")
-            .replace("(knots)", "")
-            .replace("(ft)", "")
-            .replace("(m)", "")
-            .replace("(ft/min)", "")
-            .replace("(fpm)", "")
+            .replace("(deg)", "").replace("(degrees)", "")
+            .replace("(kt)", "").replace("(kts)", "").replace("(knots)", "")
+            .replace("(ft)", "").replace("(m)", "")
+            .replace("(ft/min)", "").replace("(fpm)", "")
             .replace("[^a-z0-9_]".toRegex(), "")
             .replace("__", "_")
-    }
-
-    // ---------- Row parsing ----------
 
     private fun parseRow(cells: List<String>, col: ColIndex, sourceLine: Int): FlightPointRaw? {
         fun get(field: Field): String? {
@@ -274,14 +254,14 @@ class GarminAvionicsCsvParser(
             return if (i in cells.indices) cells[i].trim() else null
         }
 
-        val lat = parseDouble(get(Field.LAT))
-        val lon = parseDouble(get(Field.LON))
+        val lat = parseDouble(get(Field.LAT)) ?: return null
+        val lon = parseDouble(get(Field.LON)) ?: return null
 
         val timeMillis = parseTimeMillis(
-            dateStr = get(Field.DATE),
-            timeStr = get(Field.TIME),
+            dateStr      = get(Field.DATE),
+            timeStr      = get(Field.TIME),
             utcOffsetStr = get(Field.UTC_OFFSET),
-            utcTimeStr = get(Field.UTC_TIME),
+            utcTimeStr   = get(Field.UTC_TIME),
             timestampStr = get(Field.TIMESTAMP)
         )
 
@@ -292,102 +272,75 @@ class GarminAvionicsCsvParser(
             parseAltitudeToMeters(get(Field.ALT_GENERIC))
         )
 
-        val gs = parseSpeedToMps(get(Field.GS))
+        val gs  = parseSpeedToMps(get(Field.GS))
         val ias = parseSpeedToMps(get(Field.IAS))
         val tas = parseSpeedToMps(get(Field.TAS))
-        val vs = parseVerticalSpeedToMps(get(Field.VS))
+        val vs  = parseVerticalSpeedToMps(get(Field.VS))
 
         val heading = normalizeAngle(parseDouble(get(Field.HEADING)))
-        val track = normalizeAngle(parseDouble(get(Field.TRACK)))
-
-        val pitch = sanitizeAngle(parseDouble(get(Field.PITCH)), MAX_ABS_PITCH_DEG)
-        val roll = sanitizeAngle(parseDouble(get(Field.ROLL)), MAX_ABS_ROLL_DEG)
+        val track   = normalizeAngle(parseDouble(get(Field.TRACK)))
+        val pitch   = sanitizeAngle(parseDouble(get(Field.PITCH)), MAX_ABS_PITCH_DEG)
+        val roll    = sanitizeAngle(parseDouble(get(Field.ROLL)),  MAX_ABS_ROLL_DEG)
 
         val gsSafe = if (gs != null && gsToKt(gs) > MAX_GS_KT) null else gs
         val vsSafe = if (vs != null && abs(msToFpm(vs)) > MAX_ABS_VS_FTPM) null else vs
 
-        if (lat == null || lon == null) return null
-
         return FlightPointRaw(
-            timeMillis = timeMillis,
-            lat = lat,
-            lon = lon,
-            altM = alt,
-            gsMps = gsSafe,
-            vsMps = vsSafe,
-            headingDeg = heading,
-            trackDeg = track,
-            pitchDeg = pitch,
-            rollDeg = roll,
-            iasMps = ias,
-            tasMps = tas,
+            timeMillis = timeMillis, lat = lat, lon = lon, altM = alt,
+            gsMps = gsSafe, vsMps = vsSafe,
+            headingDeg = heading, trackDeg = track,
+            pitchDeg = pitch, rollDeg = roll,
+            iasMps = ias, tasMps = tas,
             sourceLine = sourceLine
         )
     }
 
-    // ---------- Time parsing ----------
-
     private fun parseTimeMillis(
-        dateStr: String?,
-        timeStr: String?,
-        utcOffsetStr: String?,
-        utcTimeStr: String?,
-        timestampStr: String?
+        dateStr: String?, timeStr: String?,
+        utcOffsetStr: String?, utcTimeStr: String?, timestampStr: String?
     ): Long? {
-        // 1) epoch/timestamp
         parseDouble(timestampStr)?.let { ts ->
-            val asLong = ts.toLong()
+            val l = ts.toLong()
             return when {
-                asLong > 1_000_000_000_000L -> asLong
-                asLong > 1_000_000_000L -> asLong * 1000L
-                else -> null
+                l > 1_000_000_000_000L -> l
+                l > 1_000_000_000L     -> l * 1000L
+                else                   -> null
             }
         }
 
-        // 2) UTC time priamo (ak je)
         if (!utcTimeStr.isNullOrBlank()) {
             val s = utcTimeStr.trim()
             try {
-                return Instant.parse(
-                    if (s.endsWith("z", true)) s else s.replace(" ", "T") + "Z"
-                ).toEpochMilli()
+                return Instant.parse(if (s.endsWith("z", true)) s else s.replace(" ", "T") + "Z")
+                    .toEpochMilli()
             } catch (_: Exception) { }
         }
 
-        // 3) Local Date + Local Time + UTC offset
         if (!dateStr.isNullOrBlank() && !timeStr.isNullOrBlank()) {
-            val date = parseLocalDate(dateStr.trim()) ?: return null
-            val time = parseLocalTime(timeStr.trim()) ?: return null
-            val ldt = LocalDateTime.of(date, time)
-
+            val date   = parseLocalDate(dateStr.trim()) ?: return null
+            val time   = parseLocalTime(timeStr.trim()) ?: return null
+            val ldt    = LocalDateTime.of(date, time)
             val offset = parseUtcOffset(utcOffsetStr)
-            return if (offset != null) {
-                ldt.toInstant(offset).toEpochMilli()
-            } else {
-                // fallback: UTC
-                ldt.toInstant(ZoneOffset.UTC).toEpochMilli()
-            }
+            return ldt.toInstant(offset ?: ZoneOffset.UTC).toEpochMilli()
         }
 
         return null
     }
 
     private fun parseLocalDate(s: String): LocalDate? {
-        val candidates = listOf(
+        val fmts = listOf(
             DateTimeFormatter.ofPattern("M/d/yyyy"),
             DateTimeFormatter.ofPattern("MM/dd/yyyy"),
             DateTimeFormatter.ofPattern("d.M.yyyy"),
             DateTimeFormatter.ofPattern("dd.MM.yyyy"),
             DateTimeFormatter.ISO_LOCAL_DATE
         )
-        for (f in candidates) {
-            try { return LocalDate.parse(s, f) } catch (_: DateTimeParseException) {}
-        }
+        for (f in fmts) try { return LocalDate.parse(s, f) } catch (_: DateTimeParseException) {}
         return null
     }
 
     private fun parseLocalTime(s: String): LocalTime? {
-        val candidates = listOf(
+        val fmts = listOf(
             DateTimeFormatter.ofPattern("H:mm:ss"),
             DateTimeFormatter.ofPattern("HH:mm:ss"),
             DateTimeFormatter.ofPattern("H:mm:ss.S"),
@@ -395,54 +348,27 @@ class GarminAvionicsCsvParser(
             DateTimeFormatter.ofPattern("H:mm:ss.SSS"),
             DateTimeFormatter.ISO_LOCAL_TIME
         )
-        for (f in candidates) {
-            try { return LocalTime.parse(s, f) } catch (_: DateTimeParseException) {}
-        }
+        for (f in fmts) try { return LocalTime.parse(s, f) } catch (_: DateTimeParseException) {}
         return null
     }
 
     private fun parseUtcOffset(s: String?): ZoneOffset? {
         if (s.isNullOrBlank()) return null
         val t = s.trim()
-
-        // "-1.00" alebo "+2.00" (hodiny)
         parseDouble(t)?.let { hours ->
-            val totalSeconds = (hours * 3600.0).toInt()
-            return ZoneOffset.ofTotalSeconds(totalSeconds)
+            return ZoneOffset.ofTotalSeconds((hours * 3600.0).toInt())
         }
-
-        // "+01:00"
         return try { ZoneOffset.of(t) } catch (_: Exception) { null }
     }
 
-    // ---------- Unit parsing helpers ----------
+    private fun parseAltitudeToMeters(s: String?) = parseDouble(s)?.let { it * 0.3048 }
+    private fun parseSpeedToMps(s: String?)        = parseDouble(s)?.let { it * 0.514444 }
+    private fun parseVerticalSpeedToMps(s: String?)= parseDouble(s)?.let { it * 0.00508 }
 
-    private fun parseAltitudeToMeters(s: String?): Double? {
-        val v = parseDouble(s) ?: return null
-        return ftToM(v)   // Garmin avionics: altitude vždy interpretovaná ako ft
-    }
-
-    private fun parseSpeedToMps(s: String?): Double? {
-        val v = parseDouble(s) ?: return null
-        return ktToMps(v)
-    }
-
-    private fun parseVerticalSpeedToMps(s: String?): Double? {
-        val v = parseDouble(s) ?: return null
-        return fpmToMps(v)
-    }
-
-    private fun ftToM(ft: Double) = ft * 0.3048
-    private fun ktToMps(kt: Double) = kt * 0.514444444444
-    private fun fpmToMps(fpm: Double) = fpm * 0.00508
-
-    private fun gsToKt(mps: Double) = mps / 0.514444444444
+    private fun gsToKt(mps: Double)  = mps / 0.514444
     private fun msToFpm(mps: Double) = mps / 0.00508
 
-    private fun sanitizeAngle(v: Double?, maxAbs: Double): Double? {
-        if (v == null) return null
-        return if (abs(v) <= maxAbs) v else null
-    }
+    private fun sanitizeAngle(v: Double?, maxAbs: Double) = v?.takeIf { abs(it) <= maxAbs }
 
     private fun normalizeAngle(v: Double?): Double? {
         if (v == null) return null
@@ -451,37 +377,20 @@ class GarminAvionicsCsvParser(
         return a
     }
 
-    private fun firstNonNull(vararg v: Double?): Double? {
-        for (x in v) if (x != null) return x
-        return null
-    }
-
-    // ---------- CSV splitting (delimiter-aware) ----------
+    private fun firstNonNull(vararg v: Double?) = v.firstOrNull { it != null }
 
     private fun splitCsvLine(line: String, delimiter: Char): List<String> {
         val out = ArrayList<String>()
-        val sb = StringBuilder()
+        val sb  = StringBuilder()
         var inQuotes = false
         var i = 0
         while (i < line.length) {
             val c = line[i]
-            when (c) {
-                '"' -> {
-                    if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
-                        sb.append('"')
-                        i++
-                    } else {
-                        inQuotes = !inQuotes
-                    }
-                }
-                delimiter -> {
-                    if (inQuotes) sb.append(c)
-                    else {
-                        out.add(sb.toString())
-                        sb.setLength(0)
-                    }
-                }
-                else -> sb.append(c)
+            when {
+                c == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> { sb.append('"'); i++ }
+                c == '"'                -> inQuotes = !inQuotes
+                !inQuotes && c == delimiter -> { out.add(sb.toString()); sb.setLength(0) }
+                else                   -> sb.append(c)
             }
             i++
         }
@@ -491,69 +400,60 @@ class GarminAvionicsCsvParser(
 
     private fun parseDouble(s: String?): Double? {
         if (s.isNullOrBlank()) return null
-        val t = s.trim()
-            .replace("\uFEFF", "")
-            .replace(" ", "")
-            .replace(",", ".")
-        return t.toDoubleOrNull()
+        return s.trim().replace("\uFEFF", "").replace(" ", "").replace(",", ".").toDoubleOrNull()
     }
-
-    // ---------- RAW -> FlightPoint (unitný výstup ako ostatné parsery) ----------
 
     fun parseToFlightPoints(
         input: InputStream,
         preferIasOverGs: Boolean = true,
-        fallbackDtSec: Double = 1.0,
-        source: LogType = LogType.GARMIN_AVIONICS
+        fallbackDtSec: Double    = 1.0,
+        source: LogType          = LogType.GARMIN_AVIONICS
     ): List<FlightPoint> {
         val rawPoints = parse(input)
         if (rawPoints.isEmpty()) return emptyList()
 
         val baseMs: Long? = rawPoints.firstNotNullOfOrNull { it.timeMillis }
-
-        var lastTSec = 0.0
+        var lastTSec   = 0.0
         var lastAbsSec: Double? = null
 
         return rawPoints.mapIndexedNotNull { idx, p ->
             val lat = p.lat ?: return@mapIndexedNotNull null
             val lon = p.lon ?: return@mapIndexedNotNull null
 
-            val absSec: Double? = p.timeMillis?.let { it / 1000.0 }
-
+            val absSec = p.timeMillis?.let { it / 1000.0 }
             val tSec: Double
             val dtSec: Double
 
             if (baseMs != null && absSec != null) {
-                val baseSec = baseMs / 1000.0
-                tSec = absSec - baseSec
+                tSec  = absSec - baseMs / 1000.0
                 dtSec = if (lastAbsSec != null) max(0.0, absSec - lastAbsSec!!) else 0.0
                 lastAbsSec = absSec
-                lastTSec = tSec
+                lastTSec   = tSec
             } else {
-                dtSec = if (idx == 0) 0.0 else fallbackDtSec
-                tSec = if (idx == 0) 0.0 else (lastTSec + dtSec)
+                dtSec    = if (idx == 0) 0.0 else fallbackDtSec
+                tSec     = if (idx == 0) 0.0 else lastTSec + dtSec
                 lastTSec = tSec
             }
 
-            val altM = p.altM ?: 0.0
+            // HDG = magnetický heading z AHRS, TRK = GPS track ako fallback pre yaw
+            // IAS preferujeme pred GndSpd — je to rýchlosť relevantná pre pilota
+            val heading  = p.headingDeg
+            val yaw      = heading ?: p.trackDeg
             val speedMps = if (preferIasOverGs) (p.iasMps ?: p.gsMps) else (p.gsMps ?: p.iasMps)
 
-            val heading = p.headingDeg
-            val yaw = heading ?: p.trackDeg
-
             FlightPoint(
-                tSec = tSec,
-                dtSec = dtSec,
-                latitude = lat,
-                longitude = lon,
-                altitudeM = altM,
-                speedMps = speedMps,
-                vsMps = p.vsMps,
-                pitchDeg = p.pitchDeg,
-                rollDeg = p.rollDeg,
-                yawDeg = yaw,
+                tSec       = tSec,
+                dtSec      = dtSec,
+                latitude   = lat,
+                longitude  = lon,
+                altitudeM  = p.altM ?: 0.0,
+                speedMps   = speedMps,
+                vsMps      = p.vsMps,
+                pitchDeg   = p.pitchDeg,
+                rollDeg    = p.rollDeg,
+                yawDeg     = yaw,
                 headingDeg = heading,
-                source = source
+                source     = source
             )
         }
     }

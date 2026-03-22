@@ -1,17 +1,28 @@
-package sk.dubrava.flightvisualizer.ui.main
+package sk.dubrava.flightvisualizer.ui.widgets
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.View
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 class AttitudeHudView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    // --- Inputs ---
     var pitchDeg: Float = 0f
         set(v) { field = v; invalidate() }
 
@@ -36,8 +47,6 @@ class AttitudeHudView @JvmOverloads constructor(
     var vsFpm: Float? = null
         set(v) { field = v?.takeIf { it.isFinite() }; invalidate() }
 
-    // --- Estimated flags (ASSISTED mód) ---
-    // true = hodnota je dopočítaná (estimated) → zobrazí sa červenou
     var isSpeedEstimated: Boolean = false
         set(v) { field = v; invalidate() }
     var isAltEstimated: Boolean = false
@@ -49,15 +58,13 @@ class AttitudeHudView @JvmOverloads constructor(
     var isCrsEstimated: Boolean = false
         set(v) { field = v; invalidate() }
 
-    // --- Colors ---
     companion object {
-        private val COLOR_NORMAL   = Color.WHITE
-        private val COLOR_ESTIMATED = Color.rgb(255, 80, 80)   // červená
-        private val COLOR_DIM      = Color.argb(180, 255, 255, 255)
-        private val COLOR_ESTIMATED_DIM = Color.argb(180, 255, 100, 100)
+        private const val COLOR_NORMAL        = Color.WHITE
+        private val       COLOR_ESTIMATED     = Color.rgb(255, 80, 80)
+        private val       COLOR_DIM           = Color.argb(180, 255, 255, 255)
+        private val       COLOR_ESTIMATED_DIM = Color.argb(180, 255, 100, 100)
     }
 
-    // --- Paints ---
     private val pSky    = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(18, 95, 190) }
     private val pGround = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(155, 98, 30) }
 
@@ -69,10 +76,6 @@ class AttitudeHudView @JvmOverloads constructor(
     }
     private val pLadder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; strokeWidth = dp(2f); strokeCap = Paint.Cap.ROUND
-    }
-    private val pText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textSize = sp(14f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val pTextSmall = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textSize = sp(12f)
@@ -86,9 +89,8 @@ class AttitudeHudView @JvmOverloads constructor(
         color = Color.rgb(25, 34, 55)
     }
 
-    // smoothing
-    private var dispRoll  = 0f
-    private var dispPitch = 0f
+    private var dispRoll    = 0f
+    private var dispPitch   = 0f
     private var lastFrameMs = 0L
 
     private fun smoothToward(current: Float, target: Float, dtSec: Float, tauSec: Float): Float {
@@ -99,7 +101,7 @@ class AttitudeHudView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        val now = android.os.SystemClock.uptimeMillis()
+        val now   = android.os.SystemClock.uptimeMillis()
         val dtSec = if (lastFrameMs == 0L) 0f else ((now - lastFrameMs).coerceAtMost(50L)) / 1000f
         lastFrameMs = now
 
@@ -123,8 +125,8 @@ class AttitudeHudView @JvmOverloads constructor(
 
         canvas.drawColor(Color.BLACK)
 
-        val barH   = dp(34f)
-        val barTop = paddingTop.toFloat()
+        val barH    = dp(34f)
+        val barTop  = paddingTop.toFloat()
         val barRect = RectF(0f, barTop, w, barTop + barH)
         drawTopNavBar(canvas, barRect)
 
@@ -136,7 +138,7 @@ class AttitudeHudView @JvmOverloads constructor(
         val radius = size * 0.46f
 
         val circleRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
-        val clipPath = Path().apply { addOval(circleRect, Path.Direction.CW) }
+        val clipPath   = Path().apply { addOval(circleRect, Path.Direction.CW) }
 
         canvas.save()
         canvas.clipPath(clipPath)
@@ -148,11 +150,10 @@ class AttitudeHudView @JvmOverloads constructor(
         canvas.rotate(+dispRoll, cx, cy)
         canvas.translate(0f, pitchOffsetPx)
 
-        val pad     = radius * 2.2f
-        val horizonY = cy
-        canvas.drawRect(cx - pad, cy - pad, cx + pad, horizonY, pSky)
-        canvas.drawRect(cx - pad, horizonY, cx + pad, cy + pad, pGround)
-        canvas.drawLine(cx - pad, horizonY, cx + pad, horizonY, pHorizon)
+        val pad = radius * 2.2f
+        canvas.drawRect(cx - pad, cy - pad, cx + pad, cy, pSky)
+        canvas.drawRect(cx - pad, cy, cx + pad, cy + pad, pGround)
+        canvas.drawLine(cx - pad, cy, cx + pad, cy, pHorizon)
         drawPitchLadderCircle(canvas, cx, cy, radius, pxPerDeg)
         canvas.restore()
 
@@ -175,29 +176,22 @@ class AttitudeHudView @JvmOverloads constructor(
         drawCornerValue(canvas, rightX, vsLabelY, "VS", vsFpm, "FPM", alignRight = true, estimated = isVsEstimated)
     }
 
-    // =========================
-    // TOP DATA BAR
-    // =========================
     private fun drawTopNavBar(canvas: Canvas, r: RectF) {
         canvas.drawRoundRect(r, dp(14f), dp(14f), pBarBg)
 
-        val pad = dp(16f)
+        val pad   = dp(16f)
         val yText = r.centerY() + sp(16f) * 0.35f
 
-        val crsTxt = "CRS " + (crsDeg?.roundToInt()?.toString()?.padStart(3, '0') ?: "---") + "°"
-        val hdgTxt = "HDG " + headingDeg.roundToInt().toString().padStart(3, '0') + "°"
+        val crsTxt   = "CRS " + (crsDeg?.roundToInt()?.toString()?.padStart(3, '0') ?: "---") + "°"
+        val hdgTxt   = "HDG " + headingDeg.roundToInt().toString().padStart(3, '0') + "°"
+        val crsPaint = makePaint(sp(16f), dim = true,  estimated = isCrsEstimated)
+        val hdgPaint = makePaint(sp(16f), dim = false, estimated = isHeadingEstimated)
 
-        // CRS — ľavý okraj, farba podľa estimated
-        val crsPaint = makePaint(sp(16f), dim = true, estimated = isCrsEstimated)
         canvas.drawText(crsTxt, r.left + pad, yText, crsPaint)
         val crsW = crsPaint.measureText(crsTxt)
-
-        // HDG — pravý okraj, farba podľa estimated
-        val hdgPaint = makePaint(sp(16f), dim = false, estimated = isHeadingEstimated)
         val hdgW = hdgPaint.measureText(hdgTxt)
         canvas.drawText(hdgTxt, r.right - pad - hdgW, yText, hdgPaint)
 
-        // compass strip v strede
         val compLeft  = r.left + pad + crsW + dp(12f)
         val compRight = r.right - pad - hdgW - dp(12f)
         if (compRight > compLeft + dp(60f)) {
@@ -215,12 +209,12 @@ class AttitudeHudView @JvmOverloads constructor(
             textSize = sp(12f)
         }
 
-        val centerX = r.centerX()
-        val degSpan = 120f
+        val centerX  = r.centerX()
+        val degSpan  = 120f
         val pxPerDeg = r.width() / degSpan
 
-        val yLetters     = r.top + dp(13f)
-        val yTickTop     = r.bottom - dp(18f)
+        val yLetters      = r.top + dp(13f)
+        val yTickTop      = r.bottom - dp(18f)
         val yTickBotMajor = r.bottom - dp(6f)
         val yTickBotMinor = r.bottom - dp(10f)
 
@@ -252,7 +246,7 @@ class AttitudeHudView @JvmOverloads constructor(
         }
         for ((deg, label) in dirs) {
             val signed = ((deg - hdgDeg + 540f) % 360f) - 180f
-            val x = centerX + signed * pxPerDeg
+            val x  = centerX + signed * pxPerDeg
             val tw = textPaint.measureText(label)
             if (x - tw / 2f >= r.left && x + tw / 2f <= r.right) {
                 canvas.drawText(label, x - tw / 2f, yLetters, textPaint)
@@ -265,9 +259,6 @@ class AttitudeHudView @JvmOverloads constructor(
         canvas.drawLine(centerX, r.top + dp(6f), centerX, r.bottom - dp(6f), lub)
     }
 
-    // =========================
-    // VS METER
-    // =========================
     private fun drawVsMeter(
         canvas: Canvas,
         cx: Float, cy: Float, radius: Float,
@@ -275,23 +266,17 @@ class AttitudeHudView @JvmOverloads constructor(
         vsFpm: Float?,
         estimated: Boolean
     ) {
-        val gap     = dp(8f)
-        val meterW  = dp(20f)
-        val topSafe = infoY + dp(34f)
-        val bottomSafe = (cy + radius) - dp(40f)
-
-        val top    = max(barRect.bottom + dp(6f), topSafe)
-        val bottom = max(top + dp(80f), bottomSafe)
+        val gap    = dp(8f)
+        val meterW = dp(20f)
+        val top    = max(barRect.bottom + dp(6f), infoY + dp(34f))
+        val bottom = max(top + dp(80f), (cy + radius) - dp(40f))
 
         var left = cx + radius + gap
         val maxRight = width.toFloat() - dp(8f)
         if (left + meterW > maxRight) left = maxRight - meterW
 
-        val r = RectF(left, top, left + meterW, bottom)
-
+        val r  = RectF(left, top, left + meterW, bottom)
         val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(120, 0, 0, 0) }
-
-        // rámeček metra — červený ak estimated
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (estimated) Color.argb(200, 255, 80, 80) else Color.argb(200, 255, 255, 255)
             style = Paint.Style.STROKE; strokeWidth = dp(2f)
@@ -315,18 +300,14 @@ class AttitudeHudView @JvmOverloads constructor(
         }
 
         val value = (vsFpm ?: 0f).coerceIn(-range, range)
-        val py = (midY - value * pxPerFpm).coerceIn(scaleTop, scaleBottom)
-
-        val pointerColor = if (estimated) Color.rgb(255, 80, 80) else Color.rgb(255, 193, 7)
+        val py    = (midY - value * pxPerFpm).coerceIn(scaleTop, scaleBottom)
         val pointer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = pointerColor; strokeWidth = dp(4f); strokeCap = Paint.Cap.ROUND
+            color = if (estimated) Color.rgb(255, 80, 80) else Color.rgb(255, 193, 7)
+            strokeWidth = dp(4f); strokeCap = Paint.Cap.ROUND
         }
         canvas.drawLine(r.left + dp(5f), py, r.right - dp(5f), py, pointer)
     }
 
-    // =========================
-    // CORNER VALUE (SPD / ALT / VS)
-    // =========================
     private fun drawCornerValue(
         canvas: Canvas,
         x: Float, y: Float,
@@ -336,24 +317,16 @@ class AttitudeHudView @JvmOverloads constructor(
         alignRight: Boolean,
         estimated: Boolean
     ) {
-        val vTxt = if (value != null && value.isFinite()) "${value.roundToInt()} $unit" else "N/A $unit"
-
+        val vTxt       = if (value != null && value.isFinite()) "${value.roundToInt()} $unit" else "N/A $unit"
         val labelPaint = makePaint(sp(11f), dim = true,  estimated = estimated)
         val valuePaint = makePaint(sp(16f), dim = false, estimated = estimated)
-
-        val labelW = labelPaint.measureText(label)
-        val valueW = valuePaint.measureText(vTxt)
-
-        val lx = if (alignRight) x - labelW else x
-        val vx = if (alignRight) x - valueW else x
+        val lx = if (alignRight) x - labelPaint.measureText(label) else x
+        val vx = if (alignRight) x - valuePaint.measureText(vTxt)  else x
 
         canvas.drawText(label, lx, y,           labelPaint)
         canvas.drawText(vTxt,  vx, y + dp(20f), valuePaint)
     }
 
-    // =========================
-    // ATTITUDE ELEMENTS
-    // =========================
     private fun drawPitchLadderCircle(
         canvas: Canvas, cx: Float, cy: Float, radius: Float, pxPerDeg: Float
     ) {
@@ -375,7 +348,7 @@ class AttitudeHudView @JvmOverloads constructor(
     private fun drawFixedAircraftMarkerWithArc(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
         val wingHalf = radius * 0.55f
         canvas.drawLine(cx - wingHalf, cy, cx + wingHalf, cy, pPointer)
-        val arcR = radius * 0.11f
+        val arcR    = radius * 0.11f
         val arcRect = RectF(cx - arcR, cy - arcR, cx + arcR, cy + arcR)
         canvas.drawArc(arcRect, 0f, 180f, false, pPointer)
         canvas.drawCircle(cx, cy, dp(3f), Paint(pPointer).apply { style = Paint.Style.FILL })
@@ -400,10 +373,10 @@ class AttitudeHudView @JvmOverloads constructor(
                 else    -> dp(10f)
             }
             val ang = Math.toRadians((a - 90).toDouble())
-            val r1 = radius - len; val r2 = radius
+            val r1  = radius - len
             canvas.drawLine(
-                cx + cos(ang).toFloat() * r1, cy + sin(ang).toFloat() * r1,
-                cx + cos(ang).toFloat() * r2, cy + sin(ang).toFloat() * r2,
+                cx + cos(ang).toFloat() * r1,    cy + sin(ang).toFloat() * r1,
+                cx + cos(ang).toFloat() * radius, cy + sin(ang).toFloat() * radius,
                 tickPaint
             )
         }
@@ -419,16 +392,6 @@ class AttitudeHudView @JvmOverloads constructor(
         })
     }
 
-    // =========================
-    // HELPERS
-    // =========================
-
-    /**
-     * Vytvorí Paint pre text so správnou farbou.
-     * estimated = true  → červená (COLOR_ESTIMATED / COLOR_ESTIMATED_DIM)
-     * estimated = false → biela  (COLOR_NORMAL   / COLOR_DIM)
-     * dim = true        → priehľadnejšia (label), false = plná (hodnota)
-     */
     private fun makePaint(textSizePx: Float, dim: Boolean, estimated: Boolean): Paint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = when {

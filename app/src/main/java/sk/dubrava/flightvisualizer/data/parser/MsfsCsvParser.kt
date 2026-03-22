@@ -24,9 +24,8 @@ class MsfsCsvParser(
         fun split(line: String) = line.split(",").map { it.trim() }
         fun toD(s: String?): Double? = s?.replace(",", ".")?.toDoubleOrNull()
 
-        // ak by niekedy SkyDolly dal "sep=,"
         val headerLine = if (lines[0].startsWith("sep=", true) && lines.size > 1) lines[1] else lines[0]
-        val dataStart = if (lines[0].startsWith("sep=", true)) 2 else 1
+        val dataStart  = if (lines[0].startsWith("sep=", true)) 2 else 1
 
         val header = split(headerLine).map { it.lowercase(Locale.ROOT) }
 
@@ -35,7 +34,6 @@ class MsfsCsvParser(
                 header.indexOf(k.lowercase(Locale.ROOT)).takeIf { it >= 0 }
             } ?: -1
 
-        // --- detekcia variantu ---
         val isVariantA = header.contains("time_ms") && header.contains("alt_m")
         val isVariantB = header.contains("timestamp") && header.contains("utc") && header.contains("altitude")
 
@@ -45,17 +43,16 @@ class MsfsCsvParser(
         }
 
         val out = ArrayList<FlightPoint>(lines.size - dataStart)
-
         var prevTSec: Double? = null
 
         if (isVariantA) {
             val iTimeMs = idx("time_ms")
-            val iLat = idx("lat_deg")
-            val iLon = idx("lon_deg")
-            val iAltM = idx("alt_m")
-            val iPitch = idx("pitch_deg")
-            val iRoll  = idx("roll_deg")
-            val iYaw   = idx("yaw_deg")
+            val iLat    = idx("lat_deg")
+            val iLon    = idx("lon_deg")
+            val iAltM   = idx("alt_m")
+            val iPitch  = idx("pitch_deg")
+            val iRoll   = idx("roll_deg")
+            val iYaw    = idx("yaw_deg")
 
             if (listOf(iTimeMs, iLat, iLon, iAltM).any { it < 0 }) return emptyList()
 
@@ -67,35 +64,34 @@ class MsfsCsvParser(
                 val lat  = toD(p.getOrNull(iLat)) ?: continue
                 val lon  = toD(p.getOrNull(iLon)) ?: continue
                 val altM = toD(p.getOrNull(iAltM)) ?: continue
-
                 val dtSec = prevTSec?.let { tSec - it } ?: Double.NaN
                 prevTSec = tSec
 
                 out += FlightPoint(
-                    tSec = tSec,
-                    dtSec = dtSec,
-                    latitude = lat,
-                    longitude = lon,
-                    altitudeM = altM,
-                    speedMps = null, // dopočíta normalizer z GPS
-                    vsMps = null,    // dopočíta normalizer z altitude/dt
-                    pitchDeg = toD(p.getOrNull(iPitch)),
-                    rollDeg  = toD(p.getOrNull(iRoll)),
-                    yawDeg   = toD(p.getOrNull(iYaw)),
+                    tSec       = tSec,
+                    dtSec      = dtSec,
+                    latitude   = lat,
+                    longitude  = lon,
+                    altitudeM  = altM,
+                    speedMps   = null,
+                    vsMps      = null,
+                    pitchDeg   = toD(p.getOrNull(iPitch)),
+                    rollDeg    = toD(p.getOrNull(iRoll)),
+                    yawDeg     = toD(p.getOrNull(iYaw)),
                     headingDeg = toD(p.getOrNull(iYaw)),
-                    source = LogType.MSFS
+                    source     = LogType.MSFS
                 )
             }
         } else {
             // Variant B: Timestamp,UTC,Latitude,Longitude,Altitude,Speed,Pitch,Bank,Heading
-            val iTime = idx("timestamp")
-            val iLat  = idx("latitude")
-            val iLon  = idx("longitude")
-            val iAltFt = idx("altitude")
+            val iTime     = idx("timestamp")
+            val iLat      = idx("latitude")
+            val iLon      = idx("longitude")
+            val iAltFt    = idx("altitude")
             val iSpeedKmh = idx("speed")
-            val iPitch = idx("pitch")
-            val iRoll  = idx("bank")
-            val iHeading = idx("heading")
+            val iPitch    = idx("pitch")
+            val iRoll     = idx("bank")
+            val iHeading  = idx("heading")
 
             if (listOf(iTime, iLat, iLon, iAltFt).any { it < 0 }) return emptyList()
 
@@ -103,34 +99,28 @@ class MsfsCsvParser(
                 val p = split(lines[i])
                 if (p.size <= maxOf(iTime, iLat, iLon, iAltFt)) continue
 
-                val tSec = (toD(p.getOrNull(iTime)) ?: continue) / 1000.0
-                val lat  = toD(p.getOrNull(iLat)) ?: continue
-                val lon  = toD(p.getOrNull(iLon)) ?: continue
-
-                val altFt = toD(p.getOrNull(iAltFt)) ?: continue
-                val altM = altFt * FT_TO_M
-
-                // Speed je u teba km/h -> m/s
+                val tSec  = (toD(p.getOrNull(iTime)) ?: continue) / 1000.0
+                val lat   = toD(p.getOrNull(iLat)) ?: continue
+                val lon   = toD(p.getOrNull(iLon)) ?: continue
+                val altM  = (toD(p.getOrNull(iAltFt)) ?: continue) * FT_TO_M
                 val speedMps = toD(p.getOrNull(iSpeedKmh))?.let { it / 3.6 }
-
                 val dtSec = prevTSec?.let { tSec - it } ?: Double.NaN
                 prevTSec = tSec
-
-                val hdg = toD(p.getOrNull(iHeading))
+                val hdg   = toD(p.getOrNull(iHeading))
 
                 out += FlightPoint(
-                    tSec = tSec,
-                    dtSec = dtSec,
-                    latitude = lat,
-                    longitude = lon,
-                    altitudeM = altM,
-                    speedMps = speedMps,
-                    vsMps = null, // dopočíta normalizer z altitude/dt
-                    pitchDeg = toD(p.getOrNull(iPitch)),
-                    rollDeg  = toD(p.getOrNull(iRoll)),
-                    yawDeg   = hdg,
+                    tSec       = tSec,
+                    dtSec      = dtSec,
+                    latitude   = lat,
+                    longitude  = lon,
+                    altitudeM  = altM,
+                    speedMps   = speedMps,
+                    vsMps      = null,
+                    pitchDeg   = toD(p.getOrNull(iPitch)),
+                    rollDeg    = toD(p.getOrNull(iRoll)),
+                    yawDeg     = hdg,
                     headingDeg = hdg,
-                    source = LogType.MSFS
+                    source     = LogType.MSFS
                 )
             }
         }

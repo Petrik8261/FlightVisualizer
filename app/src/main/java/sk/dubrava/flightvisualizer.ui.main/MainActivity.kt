@@ -34,7 +34,7 @@ import sk.dubrava.flightvisualizer.core.GeoMath
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
 import sk.dubrava.flightvisualizer.data.model.LogType
 import sk.dubrava.flightvisualizer.ui.importdata.DataSummaryActivity
-import sk.dubrava.flightvisualizer.ui.start.StartActivity
+import sk.dubrava.flightvisualizer.ui.widgets.AttitudeHudView
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
@@ -46,7 +46,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val TAG = "MAIN"
 
         private const val DEFAULT_DT_SEC = 0.2
-
         private const val MIN_SEG_DUR_SEC = 0.02
         private const val RENDER_HZ = 30.0
 
@@ -58,9 +57,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val MPS_TO_FPM = 196.850394
     }
 
-    // -----------------------------
-    // Core state
-    // -----------------------------
     private var googleMap: GoogleMap? = null
 
     private lateinit var vehicleType: String
@@ -102,7 +98,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var lastPosForCrs: LatLng? = null
 
     private var flightMarker: Marker? = null
-
     private var lastVsMpsStable: Double? = null
 
     private val choreographer by lazy { Choreographer.getInstance() }
@@ -116,15 +111,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun hasFrames(): Boolean = framesCount > 0
 
-    // -----------------------------
-    // Lifecycle
-    // -----------------------------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        setSupportActionBar(findViewById<Toolbar>(R.id.toolbar))
+        setSupportActionBar(findViewById(R.id.toolbar))
         supportActionBar?.title = ""
 
         flightHelper = FlightHelper(contentResolver)
@@ -182,9 +174,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         super.onDestroy()
     }
 
-    // -----------------------------
-    // Menu
-    // -----------------------------
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
         return true
@@ -198,14 +187,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -----------------------------
-    // Navigation / exit
-    // -----------------------------
     private fun beginExitMode() {
         if (isExiting) return
         isExiting = true
         pausePlayback()
-        googleMap   = null
+        googleMap    = null
         flightMarker = null
     }
 
@@ -228,9 +214,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -----------------------------
-    // Map
-    // -----------------------------
     override fun onMapReady(map: GoogleMap) {
         googleMap = map
         googleMap?.mapType = GoogleMap.MAP_TYPE_SATELLITE
@@ -254,15 +237,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             return
         }
 
-        // Playback speed podľa zdroja
         playbackSpeed = when (flightPoints.firstOrNull()?.source) {
             LogType.MSFS  -> 4.0
             LogType.DRONE -> 1.6
             else          -> 2.0
         }
-
-        // Estimated flagy na HUD — závisí od zdroja + módu
-        applyEstimatedFlags()
 
         routeLatLng = flightHelper.buildRoute(flightPoints)
         if (routeLatLng.size < 2) {
@@ -308,94 +287,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         seekToIndex(0)
     }
 
-    // -----------------------------
-    // Estimated flags
-    // -----------------------------
-    /**
-     * Nastaví estimated flagy na AttitudeHudView podľa zdroja logu a módu.
-     * Volá sa raz po načítaní flightPoints. Flagy sú platné pre celý záznam.
-     *
-     * Pravidlo:
-     *   RAW mód    → žiadne estimated (hodnota je buď z logu alebo N/A)
-     *   ASSISTED   → estimated = true pre každú veličinu, ktorú DataNormalizer dopočítal
-     */
-    private fun applyEstimatedFlags() {
-        val src = flightPoints.firstOrNull()?.source ?: return
-
-        if (derivedMode == DerivedMode.RAW) {
-            attitudeView.isSpeedEstimated   = false
-            attitudeView.isAltEstimated     = false
-            attitudeView.isVsEstimated      = false
-            attitudeView.isHeadingEstimated = false
-            attitudeView.isCrsEstimated     = false
-            return
-        }
-
-        // ASSISTED mód
-        when (src) {
-            LogType.KML -> {
-                // speed: DataNormalizer sliding window z GPS dist/dt
-                // VS:    dAlt/dt v parseri + EMA v normalizéri
-                // HDG:   z KML (reálny kurz, len korigovaný o offset) → nie estimated
-                // CRS:   GPS track → estimated
-                // ALT:   priamo z KML → spoľahlivá
-                attitudeView.isSpeedEstimated   = true
-                attitudeView.isAltEstimated     = false
-                attitudeView.isVsEstimated      = true
-                attitudeView.isHeadingEstimated = false
-                attitudeView.isCrsEstimated     = true
-            }
-
-            LogType.ARDUINO_TXT -> {
-                // speed: nie je v logu, DataNormalizer ho nededuplikuje → zostane N/A
-                // VS:    dAlt/dt
-                // HDG:   z GPS track
-                // CRS:   z GPS track
-                // ALT:   z logu
-                attitudeView.isSpeedEstimated   = false   // N/A, nie estimated
-                attitudeView.isAltEstimated     = false
-                attitudeView.isVsEstimated      = true
-                attitudeView.isHeadingEstimated = true
-                attitudeView.isCrsEstimated     = true
-            }
-
-            LogType.MSFS -> {
-                // speed: z logu (Variant B), alebo N/A (Variant A)
-                // VS:    estimateMsfsVsRegression v DataNormalizeri
-                // HDG:   z logu
-                // CRS:   GPS track
-                // ALT:   z logu
-                attitudeView.isSpeedEstimated   = false
-                attitudeView.isAltEstimated     = false
-                attitudeView.isVsEstimated      = true
-                attitudeView.isHeadingEstimated = false
-                attitudeView.isCrsEstimated     = true
-            }
-
-            LogType.DRONE,
-            LogType.GARMIN_AVIONICS -> {
-                // všetko priamo z telemetrie, CRS je GPS track
-                attitudeView.isSpeedEstimated   = false
-                attitudeView.isAltEstimated     = false
-                attitudeView.isVsEstimated      = false
-                attitudeView.isHeadingEstimated = false
-                attitudeView.isCrsEstimated     = true
-            }
-
-            else -> {
-                // GENERIC: speed a VS môžu byť dopočítané
-                attitudeView.isSpeedEstimated   = true
-                attitudeView.isAltEstimated     = false
-                attitudeView.isVsEstimated      = true
-                attitudeView.isHeadingEstimated = true
-                attitudeView.isCrsEstimated     = true
-            }
-        }
-    }
-
-    // -----------------------------
-    // Playback
-    // -----------------------------
     private fun startPlayback() {
         if (isExiting || !hasFrames() || isPlaying) return
         isPlaying = true
@@ -459,9 +350,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -----------------------------
-    // Rendering (interpolated)
-    // -----------------------------
     private fun renderInterpolated() {
         if (isExiting) return
         if (framesCount < 2) return
@@ -474,13 +362,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val tb = segmentT0Sec + segmentDurSec
         val tt = if (tb > ta) ((playbackTimeSec - ta) / (tb - ta)).coerceIn(0.0, 1.0) else 0.0
 
-        // Pozícia
         val lat = lerp(a.latitude,  b.latitude,  tt)
         val lon = lerp(a.longitude, b.longitude, tt)
         val pos = LatLng(lat, lon)
         flightMarker?.position = pos
 
-        // CRS (track z GPS)
         val prevPos = lastPosForCrs
         val crs = if (prevPos != null) {
             val d = GeoMath.distanceMeters(prevPos, pos)
@@ -491,7 +377,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (crs != null) lastCrsDeg = crs
         lastPosForCrs = pos
 
-        // Pitch / Roll
         val pitchA = a.pitchDeg ?: 0.0
         val pitchB = b.pitchDeg ?: pitchA
         val rollA  = a.rollDeg  ?: 0.0
@@ -509,27 +394,26 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         attitudeView.pitchDeg = pitchForHud.toFloat()
         attitudeView.rollDeg  = roll.toFloat()
 
-        // Yaw / Heading
         val yawA = (a.yawDeg?.takeIf { it.isFinite() } ?: a.headingDeg?.takeIf { it.isFinite() })
             ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
         val yawB = (b.yawDeg?.takeIf { it.isFinite() } ?: b.headingDeg?.takeIf { it.isFinite() })
             ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
         val yaw = lerpAngleDeg(yawA, yawB, tt)
 
+        // ARDUINO_TXT nemá magnetometer — HDG sa rovná CRS aby nos sledoval skutočný smer letu
         val hdgForDisplay = when {
-            yaw.isFinite()              -> yaw
+            a.source == LogType.ARDUINO_TXT && crs != null && crs.isFinite() -> crs.toDouble()
+            yaw.isFinite()                -> yaw
             crs != null && crs.isFinite() -> crs.toDouble()
-            else                        -> 0.0
+            else                          -> 0.0
         }
 
         attitudeView.headingDeg = norm360(hdgForDisplay).toFloat()
         flightMarker?.rotation  = norm360(hdgForDisplay).toFloat()
 
-        // Altitude
         val altM = lerp(a.altitudeM, b.altitudeM, tt)
         attitudeView.altitudeFt = (altM * M_TO_FT).toFloat()
 
-        // Speed
         val speedMps = when (derivedMode) {
             DerivedMode.RAW,
             DerivedMode.ASSISTED -> {
@@ -541,13 +425,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         attitudeView.speedKts = speedMps?.takeIf { it.isFinite() }?.let { (it * MPS_TO_KTS).toFloat() }
 
-        // Vertical Speed
         val vsMpsRaw = when (derivedMode) {
             DerivedMode.RAW,
             DerivedMode.ASSISTED -> a.vsMps?.takeIf { it.isFinite() }
         }
 
-        // Spike gate + EMA pre MSFS v ASSISTED (kozmetika)
+        // Spike gate + EMA na vyhladzenie VS pre MSFS v ASSISTED móde
         val vsStableMps = if (derivedMode == DerivedMode.ASSISTED && a.source == LogType.MSFS) {
             if (vsMpsRaw == null) {
                 null
@@ -572,7 +455,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         attitudeView.vsFpm = vsStableMps?.let { (it * MPS_TO_FPM).toFloat() }
 
-        // Camera follow
         if (followCamera) {
             val map = googleMap ?: return
 
@@ -629,9 +511,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -----------------------------
-    // Seeking
-    // -----------------------------
     private fun totalDurationSec(): Double {
         val lastSeg = (framesCount - 2).coerceAtLeast(0)
         var sum = 0.0
@@ -695,9 +574,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         attitudeView.pitchDeg = pitchHud.toFloat()
         attitudeView.rollDeg  = (fp.rollDeg ?: 0.0).toFloat()
 
-        val yaw = fp.yawDeg?.takeIf { it.isFinite() }
-            ?: fp.headingDeg?.takeIf { it.isFinite() }
-            ?: if (idx > 0) headingDegrees(routeLatLng[idx - 1], routeLatLng[idx]) else 0.0
+        // ARDUINO_TXT: HDG = smer k nasledujúcemu fixu, konzistentné s renderInterpolated
+        val yaw = when {
+            fp.source == LogType.ARDUINO_TXT && idx < lastFrameIndex ->
+                headingDegrees(routeLatLng[idx], routeLatLng[idx + 1])
+            fp.yawDeg?.isFinite() == true     -> fp.yawDeg
+            fp.headingDeg?.isFinite() == true -> fp.headingDeg
+            idx > 0 -> headingDegrees(routeLatLng[idx - 1], routeLatLng[idx])
+            else    -> 0.0
+        }
 
         attitudeView.headingDeg = norm360(yaw).toFloat()
         flightMarker?.rotation  = norm360(yaw).toFloat()
@@ -713,9 +598,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (playbackSeekBar.progress != idx) playbackSeekBar.progress = idx
     }
 
-    // -----------------------------
-    // Polyline
-    // -----------------------------
     private fun drawRoute(points: List<LatLng>) {
         val map = googleMap ?: return
         if (points.size < 2) return
@@ -728,9 +610,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         )
     }
 
-    // -----------------------------
-    // Google Play Services
-    // -----------------------------
     private fun checkGooglePlayServices(): Boolean {
         val api    = GoogleApiAvailability.getInstance()
         val result = api.isGooglePlayServicesAvailable(this)
@@ -742,9 +621,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    // -----------------------------
-    // Utilities
-    // -----------------------------
     private fun scaledMarker(resId: Int, widthDp: Int, heightDp: Int): BitmapDescriptor =
         BitmapDescriptorFactory.fromBitmap(
             android.graphics.Bitmap.createScaledBitmap(

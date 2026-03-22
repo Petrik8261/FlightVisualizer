@@ -6,3 +6,8 @@
 .gradle/
 build/
 local.properties
+
+# API keys
+google-services.json
+*.keystore
+*.jks

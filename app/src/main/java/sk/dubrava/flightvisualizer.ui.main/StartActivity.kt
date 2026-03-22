@@ -1,4 +1,4 @@
-package sk.dubrava.flightvisualizer.ui.start
+package sk.dubrava.flightvisualizer.ui.main
 
 import android.content.Intent
 import android.net.Uri
@@ -85,7 +85,6 @@ class StartActivity : AppCompatActivity() {
             finishAffinity()
         }
 
-        // initial state
         tvSelectedFile.text = "(žiadny)"
         updateClearButtonState()
     }
@@ -97,7 +96,6 @@ class StartActivity : AppCompatActivity() {
     }
 
     private fun openSummary(uri: Uri, displayName: String) {
-        // zatiaľ default plane; neskôr to v DataSummary vieme prepnúť podľa LogType
         val vehicleType = AppNav.VEHICLE_PLANE
 
         val i = Intent(this, DataSummaryActivity::class.java).apply {
