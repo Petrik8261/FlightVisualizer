@@ -58,5 +58,5 @@ app/
 
 ## Autor
 
-Peter Dubrava — bakalárska práca MOBILNÁ APLIKÁCIA S GEOLOKAČNÝMI
-A MAPOVÝMI PRVKAMI, UKF Nitra
+Peter Dúbrava — bakalárska práca Mobilná aplikácia s geolokačnými
+a mapovými prvkami, UKF Nitra
