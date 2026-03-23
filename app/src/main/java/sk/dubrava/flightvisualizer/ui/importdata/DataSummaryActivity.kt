@@ -20,8 +20,6 @@ import sk.dubrava.flightvisualizer.data.model.LogType
 import sk.dubrava.flightvisualizer.ui.main.MainActivity
 import java.util.Locale
 import kotlin.math.max
-import com.google.android.gms.maps.model.LatLng
-import sk.dubrava.flightvisualizer.core.GeoMath
 
 class DataSummaryActivity : AppCompatActivity() {
 
@@ -65,12 +63,12 @@ class DataSummaryActivity : AppCompatActivity() {
             finish()
             return
         }
+
         val src = points.firstOrNull()?.source
 
         autoVehicleType = when (src) {
             LogType.DRONE -> AppNav.VEHICLE_DRONE
-            // ak chceš, môžeš dať TXT ako "unknown" -> default plane
-            else -> AppNav.VEHICLE_PLANE
+            else          -> AppNav.VEHICLE_PLANE
         }
 
         bindSummary(points)
@@ -97,140 +95,108 @@ class DataSummaryActivity : AppCompatActivity() {
     private fun bindSummary(points: List<FlightPoint>) {
         findViewById<TextView>(R.id.tvFile).text = "Súbor: $fileName"
 
-        val src: LogType = points.firstOrNull()?.source ?: LogType.GENERIC
-        val detectedType = src.name
+        val src      = points.firstOrNull()?.source ?: LogType.GENERIC
         val duration = computeDurationSec(points)?.let { formatDuration(it) } ?: "—"
         findViewById<TextView>(R.id.tvMeta).text =
-            "Typ: $detectedType • Body: ${points.size} • Trvanie: $duration"
+            "Typ: ${src.name} • Body: ${points.size} • Trvanie: $duration"
 
-        // -----------------------------
-        // 7 veličín ktoré appka zobrazuje
-        // -----------------------------
-
-        // CRS: ak máme aspoň 2 body s platným lat/lon, CRS vieme vždy (track existuje)
         val hasTrack = points.size >= 2 &&
                 points.any { it.latitude.isFinite() && it.longitude.isFinite() }
         val crsAvail = if (hasTrack) Avail.OK else Avail.NA
 
-        // HDG: z logu (yaw/heading) alebo fallback na CRS
         val hasHdgInLog = points.any {
-            (it.yawDeg?.isFinite() == true) || (it.headingDeg?.isFinite() == true)
+            it.yawDeg?.isFinite() == true || it.headingDeg?.isFinite() == true
         }
         val hdgAvail = when (src) {
-            LogType.MSFS, LogType.DRONE, LogType.GARMIN_AVIONICS -> if (hasHdgInLog) Avail.OK else Avail.EST
-            LogType.KML -> if (hasHdgInLog) Avail.OK else Avail.EST
-            else -> Avail.EST // GENERIC/TXT: heading nemáme -> bude z CRS
+            LogType.MSFS, LogType.DRONE, LogType.GARMIN_AVIONICS, LogType.KML ->
+                if (hasHdgInLog) Avail.OK else Avail.EST
+            else -> Avail.EST
         }
 
-        // SPEED: len ak je v logu (MSFS variant B / drone), inak estimated iba pre KML (z GPS+dt)
-        val hasSpeed = points.any { it.speedMps?.isFinite() == true }
+        val hasSpeed  = points.any { it.speedMps?.isFinite() == true }
         val speedAvail = when (src) {
             LogType.MSFS, LogType.DRONE, LogType.GARMIN_AVIONICS -> if (hasSpeed) Avail.OK else Avail.NA
             LogType.KML -> if (hasTrack) Avail.EST else Avail.NA
-            else -> Avail.NA
+            else        -> Avail.NA
         }
 
-        // ALT
-        val hasAlt = points.any { it.altitudeM.isFinite() }
+        val hasAlt  = points.any { it.altitudeM.isFinite() }
         val altAvail = if (hasAlt) Avail.OK else Avail.NA
 
-        // VS: rozlišuj "logová vs" vs "dopočítaná vs"
-        val hasVs = points.any { it.vsMps?.isFinite() == true }
+        val hasVs         = points.any { it.vsMps?.isFinite() == true }
         val canEstimateVs = hasAlt && hasAnyTime(points)
 
         val vsAvail = when (src) {
-            LogType.MSFS -> if (canEstimateVs) Avail.EST else Avail.NA
-            LogType.KML -> if (canEstimateVs) Avail.EST else Avail.NA
-            LogType.ARDUINO_TXT -> if (canEstimateVs) Avail.EST else Avail.NA
+            LogType.MSFS, LogType.KML, LogType.ARDUINO_TXT -> if (canEstimateVs) Avail.EST else Avail.NA
             LogType.DRONE, LogType.GARMIN_AVIONICS -> when {
-                hasVs -> Avail.OK
+                hasVs         -> Avail.OK
                 canEstimateVs -> Avail.EST
-                else -> Avail.NA
+                else          -> Avail.NA
             }
             else -> when {
-                hasVs -> Avail.OK
+                hasVs         -> Avail.OK
                 canEstimateVs -> Avail.EST
-                else -> Avail.NA
+                else          -> Avail.NA
             }
         }
 
-        // PITCH/ROLL
         val hasPitch = points.any { it.pitchDeg?.isFinite() == true }
-        val hasRoll = points.any { it.rollDeg?.isFinite() == true }
+        val hasRoll  = points.any { it.rollDeg?.isFinite() == true }
 
         val pitchAvail = when (src) {
-            LogType.KML -> Avail.NA
+            LogType.KML         -> Avail.NA
             LogType.ARDUINO_TXT -> if (hasPitch) Avail.EST else Avail.NA
-            LogType.MSFS, LogType.DRONE, LogType.GARMIN_AVIONICS -> if (hasPitch) Avail.OK else Avail.NA
-            else -> if (hasPitch) Avail.OK else Avail.NA
+            else                -> if (hasPitch) Avail.OK else Avail.NA
         }
 
         val rollAvail = when (src) {
             LogType.ARDUINO_TXT -> if (hasRoll) Avail.EST else Avail.NA
-            else -> if (hasRoll) Avail.OK else Avail.NA
+            else                -> if (hasRoll) Avail.OK else Avail.NA
         }
 
-        // UI render
-        findViewById<TextView>(R.id.tvCrs).text = "${mark(crsAvail)} CRS (course)"
-        findViewById<TextView>(R.id.tvHdg).text = "${mark(hdgAvail)} HDG (heading)"
-        findViewById<TextView>(R.id.tvSpeed).text = "${mark(speedAvail)} SPEED"
-        findViewById<TextView>(R.id.tvAlt).text = "${mark(altAvail)} ALT"
-        findViewById<TextView>(R.id.tvVs).text = "${mark(vsAvail)} VS"
-        findViewById<TextView>(R.id.tvPitch).text = "${mark(pitchAvail)} PITCH"
-        findViewById<TextView>(R.id.tvRoll).text = "${mark(rollAvail)} ROLL"
+        findViewById<TextView>(R.id.tvCrs).text   = "${mark(crsAvail)} CRS (course)"
+        findViewById<TextView>(R.id.tvHdg).text   = "${mark(hdgAvail)} HDG (heading)"
+        findViewById<TextView>(R.id.tvSpeed).text  = "${mark(speedAvail)} SPEED"
+        findViewById<TextView>(R.id.tvAlt).text   = "${mark(altAvail)} ALT"
+        findViewById<TextView>(R.id.tvVs).text    = "${mark(vsAvail)} VS"
+        findViewById<TextView>(R.id.tvPitch).text  = "${mark(pitchAvail)} PITCH"
+        findViewById<TextView>(R.id.tvRoll).text  = "${mark(rollAvail)} ROLL"
 
-        // -----------------------------
-        // Režim: auto vs výber
-        // -----------------------------
-        val ext = fileName.lowercase(Locale.ROOT)
+        val ext         = fileName.lowercase(Locale.ROOT)
         val needsChoice = ext.endsWith(".kml") || ext.endsWith(".txt")
 
-        val rg = findViewById<RadioGroup>(R.id.rgMode)
-        val rbRaw = findViewById<RadioButton>(R.id.rbRaw)
+        val rg         = findViewById<RadioGroup>(R.id.rgMode)
+        val rbRaw      = findViewById<RadioButton>(R.id.rbRaw)
         val rbAssisted = findViewById<RadioButton>(R.id.rbAssisted)
 
-        // “Assisted má zmysel?” - aktuálne len keď existuje aspoň jedna EST veličina, ktorú Assisted reálne doplní
-        // momentálne: VS (a neskôr speed)
-        val assistedUseful = (vsAvail == Avail.EST)
-
+        val assistedUseful = vsAvail == Avail.EST
         val autoMode = when {
-            // MSFS bez VS je typicky kvalitné -> Assisted
             src == LogType.MSFS && vsAvail == Avail.EST -> DerivedMode.ASSISTED
-            // všeobecne: ak Assisted dá niečo navyše, zvoľ Assisted
-            assistedUseful -> DerivedMode.ASSISTED
-            else -> DerivedMode.RAW
+            assistedUseful                              -> DerivedMode.ASSISTED
+            else                                        -> DerivedMode.RAW
         }
 
         if (needsChoice) {
             rg.visibility = View.VISIBLE
-            // default: RAW pri problematických formátoch, ale ak to je MSFS a má to zmysel, prefer Assisted
             if (autoMode == DerivedMode.ASSISTED) rbAssisted.isChecked = true else rbRaw.isChecked = true
             rg.tag = null
         } else {
-            // kvalitné: bez voľby
             rg.visibility = View.GONE
             rg.tag = autoMode
         }
 
-        // -----------------------------
-        // Poznámky
-        // -----------------------------
         val notes = mutableListOf<String>()
 
         if (src == LogType.KML) {
             notes += "KML Camera: roll/heading sú záznam kamery; pitch je z tilt (virtuálna kamera)."
             notes += "V RAW sa pitch nezobrazuje; v ASSISTED bude pitch prepočítaný pre potrebu vizualizácie (estimated)."
         }
-
-        if (src == LogType.MSFS && vsAvail == Avail.EST) {
+        if (src == LogType.MSFS && vsAvail == Avail.EST)
             notes += "VS bude dopočítané z ALT a času (estimated)."
-        }
-
         if (src == LogType.ARDUINO_TXT) {
             notes += "PITCH/ROLL sú dopočítané zo senzorov X/Y/Z (estimated)."
             if (vsAvail == Avail.EST) notes += "VS bude dopočítané z ALT a času (estimated)."
         }
-
         if (hdgAvail == Avail.EST) notes += "HDG bude odvodené z trasy (CRS)."
         if (needsChoice) notes += "Pre tento formát je možné zvoliť RAW (iba dostupné) alebo ASSISTED (estimated)."
 
@@ -238,7 +204,6 @@ class DataSummaryActivity : AppCompatActivity() {
             if (notes.isEmpty()) "Bez špeciálnych poznámok."
             else notes.joinToString(separator = "\n• ", prefix = "• ")
 
-        // Hint text
         findViewById<TextView>(R.id.tvModeHint).text =
             if (needsChoice) "RAW = bez odhadov • ASSISTED = doplnené estimated údaje"
             else "Režim bol zvolený automaticky podľa kvality dát."
@@ -246,42 +211,20 @@ class DataSummaryActivity : AppCompatActivity() {
 
     private fun selectedMode(): DerivedMode {
         val rg = findViewById<RadioGroup>(R.id.rgMode)
-        if (rg.visibility != View.VISIBLE) {
-            return (rg.tag as? DerivedMode) ?: DerivedMode.RAW
-        }
-        val rbAssisted = findViewById<RadioButton>(R.id.rbAssisted)
-        return if (rbAssisted.isChecked) DerivedMode.ASSISTED else DerivedMode.RAW
+        if (rg.visibility != View.VISIBLE) return (rg.tag as? DerivedMode) ?: DerivedMode.RAW
+        return if (findViewById<RadioButton>(R.id.rbAssisted).isChecked) DerivedMode.ASSISTED else DerivedMode.RAW
     }
 
-    // -----------------------------
-    // Helpers
-    // -----------------------------
     private enum class Avail { OK, EST, NA }
 
     private fun mark(a: Avail): String = when (a) {
-        Avail.OK -> "✅"
+        Avail.OK  -> "✅"
         Avail.EST -> "⚠️"
-        Avail.NA -> "❌"
-    }
-
-    private fun hasUsableTrack(points: List<FlightPoint>): Boolean {
-        if (points.size < 2) return false
-
-        val a = LatLng(points[0].latitude, points[0].longitude)
-
-        // stačí nájsť jeden bod, ktorý sa reálne pohol aspoň o 1 meter
-        val limit = minOf(points.size, 2000)
-        for (i in 1 until limit) {
-            val b = LatLng(points[i].latitude, points[i].longitude)
-            val d = GeoMath.distanceMeters(a, b)
-            if (d.isFinite() && d >= 1.0) return true
-        }
-        return false
+        Avail.NA  -> "❌"
     }
 
     private fun hasAnyTime(points: List<FlightPoint>): Boolean {
-        val hasDt = points.any { it.dtSec.isFinite() && it.dtSec > 0.0 }
-        if (hasDt) return true
+        if (points.any { it.dtSec.isFinite() && it.dtSec > 0.0 }) return true
         for (i in 0 until points.size - 1) {
             val a = points[i].tSec
             val b = points[i + 1].tSec
@@ -292,11 +235,10 @@ class DataSummaryActivity : AppCompatActivity() {
 
     private fun computeDurationSec(points: List<FlightPoint>): Double? {
         val first = points.first().tSec
-        val last = points.last().tSec
+        val last  = points.last().tSec
         if (first.isFinite() && last.isFinite() && last > first) return last - first
 
-        var sum = 0.0
-        var ok = false
+        var sum = 0.0; var ok = false
         for (p in points) {
             val dt = p.dtSec
             if (dt.isFinite() && dt > 0.0) { sum += dt; ok = true }

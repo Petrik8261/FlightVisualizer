@@ -1,15 +1,12 @@
 package sk.dubrava.flightvisualizer.core
 
 import com.google.android.gms.maps.model.LatLng
-import kotlin.math.*
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 object GeoMath {
-
-    fun norm360(d: Double): Double {
-        var x = d % 360.0
-        if (x < 0) x += 360.0
-        return x
-    }
 
     fun distanceMeters(a: LatLng, b: LatLng): Double {
         val R = 6371000.0
