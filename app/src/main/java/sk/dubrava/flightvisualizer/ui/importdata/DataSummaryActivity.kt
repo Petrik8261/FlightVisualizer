@@ -244,7 +244,6 @@ class DataSummaryActivity : AppCompatActivity() {
             if (vsAvail == Avail.EST) notes += "VS bude dopočítané z ALT a času (estimated)."
         }
 
-        if (hdgAvail == Avail.EST) notes += "HDG bude odvodené z trasy (CRS)."
         if (needsChoice) notes += "Pre tento formát je možné zvoliť RAW (iba dostupné) alebo ASSISTED (estimated)."
 
         findViewById<TextView>(R.id.tvWarnings).text =

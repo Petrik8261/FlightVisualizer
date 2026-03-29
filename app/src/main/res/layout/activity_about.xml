@@ -1,0 +1,493 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="#0E1733"
+            app:titleTextColor="@android:color/white" />
+
+        <!-- Hlavička -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingTop="28dp"
+            android:paddingBottom="20dp"
+            android:paddingHorizontal="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FlightVisualizer"
+                android:textColor="#FFFFFF"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvVersion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#B8C0D8"
+                android:textSize="13sp" />
+
+        </LinearLayout>
+
+        <!-- Popis -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="6dp"
+            android:text="Popis"
+            android:textColor="#F4C10F"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="10dp"
+            android:textColor="#D0D8EC"
+            android:textSize="14sp"
+            android:lineSpacingMultiplier="1.5"
+            android:text="Aplikácia zobrazuje letové záznamy na satelitnej mape a vizualizuje letové parametre prostredníctvom syntetického displeja letu (HUD). Podporuje záznamy z avioniky všeobecného letectva, leteckých simulátorov, rekreačných dronov aj vlastných zariadení." />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="16dp"
+            android:textColor="#D0D8EC"
+            android:textSize="14sp"
+            android:lineSpacingMultiplier="1.5"
+            android:text="Pred prehrávaním sa zobrazí prehľad dostupných veličín. Podľa obsahu záznamu sa automaticky zvolí režim HUD: plný (FULL), obmedzený (LIMITED) alebo trajektórový (TRAJECTORY)." />
+
+        <!-- Separator -->
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:layout_marginBottom="16dp"
+            android:background="#1E2A4A" />
+
+        <!-- Podporované formáty — nadpis -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="10dp"
+            android:text="Podporované formáty"
+            android:textColor="#F4C10F"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+
+        <!-- Hlavička tabuľky -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="6dp"
+            android:background="#0E1733">
+
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="2.2"
+                android:text="Formát" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.7" android:gravity="center"
+                android:text="CRS" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.7" android:gravity="center"
+                android:text="HDG" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.7" android:gravity="center"
+                android:text="SPD" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.7" android:gravity="center"
+                android:text="ALT" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.65" android:gravity="center"
+                android:text="VS" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.85" android:gravity="center"
+                android:text="PITCH" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="0.8" android:gravity="center"
+                android:text="ROLL" android:textColor="#8A95B0"
+                android:textSize="11sp" android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Riadok: WIW GPS Logger (KML) -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="WIW GPS Logger\n.kml" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: SkyDemon (KML gx:Track) -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp" android:background="#060B18">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="SkyDemon\n.kml" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="❌" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="❌" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: GPX -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="ForeFlight / Garmin Pilot\n.gpx" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="❌" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="❌" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: Garmin G1000/G3X -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp" android:background="#060B18">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="Garmin G1000 / G3X\n.csv" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: MSFS SkyDolly -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="MSFS SkyDolly\n.csv" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: DJI FlightRecord -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp" android:background="#060B18">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="DJI FlightRecord\n.csv" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: AirData -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="AirData UAV\n.csv" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:background="#1A2240" />
+        </LinearLayout>
+
+        <!-- Riadok: Arduino TXT -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:paddingBottom="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="20dp"
+                android:paddingVertical="9dp" android:background="#060B18">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="2.2"
+                    android:text="Arduino GPS+IMU\n.txt" android:textColor="#FFFFFF"
+                    android:textSize="12sp" android:lineSpacingMultiplier="1.3" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:gravity="center"
+                    android:text="✅" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.65" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.85" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:gravity="center"
+                    android:text="⚠️" android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Separator -->
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:layout_marginStart="20dp" android:layout_marginEnd="20dp" android:layout_marginBottom="16dp"
+            android:background="#1E2A4A" />
+
+        <!-- Legenda -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="8dp"
+            android:text="Legenda"
+            android:textColor="#F4C10F"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="4dp"
+            android:text="✅  Dostupné priamo zo záznamu"
+            android:textColor="#D0D8EC"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="4dp"
+            android:text="⚠️  Odhadnuté (ASSISTED mód) — označené EST"
+            android:textColor="#D0D8EC"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="16dp"
+            android:text="❌  Nedostupné pre daný formát"
+            android:textColor="#D0D8EC"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="24dp"
+            android:textColor="#5A6480"
+            android:textSize="12sp"
+            android:lineSpacingMultiplier="1.6"
+            android:text="CRS — ground track z GPS\nHDG — smer nosa lietadla\nSPD — rýchlosť\nALT — výška\nVS — vertikálna rýchlosť\nPITCH — pozdĺžny náklon\nROLL — priečny náklon" />
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="32dp"
+            android:text="Späť"
+            android:textColor="@android:color/white"
+            android:backgroundTint="#0E1733" />
+
+    </LinearLayout>
+</ScrollView>

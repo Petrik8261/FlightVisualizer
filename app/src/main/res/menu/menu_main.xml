@@ -10,5 +10,9 @@
         android:id="@+id/action_home"
         android:title="Úvodná obrazovka"
         app:showAsAction="never" />
+    <item
+        android:id="@+id/action_about"
+        android:title="O aplikácii"
+        app:showAsAction="never" />
 </menu>
 
