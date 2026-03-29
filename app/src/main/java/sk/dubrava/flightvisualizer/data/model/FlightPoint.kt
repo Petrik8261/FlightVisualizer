@@ -22,17 +22,9 @@ enum class LogType {
     MSFS,
     DRONE,
     KML,
+    KML_TRACK,
+    GPX,
     ARDUINO_TXT,
     GENERIC,
     GARMIN_AVIONICS
 }
-
-
-
-
-
-
-
-
-
-

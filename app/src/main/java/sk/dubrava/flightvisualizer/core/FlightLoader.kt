@@ -9,8 +9,10 @@ import sk.dubrava.flightvisualizer.data.normalize.DataNormalizer
 import sk.dubrava.flightvisualizer.data.parser.ArduinoTxtParser
 import sk.dubrava.flightvisualizer.data.parser.DroneCsvParser
 import sk.dubrava.flightvisualizer.data.parser.GarminAvionicsCsvParser
+import sk.dubrava.flightvisualizer.data.parser.GpxFlightParser
 import sk.dubrava.flightvisualizer.data.parser.KmlFlightParser
 import sk.dubrava.flightvisualizer.data.parser.MsfsCsvParser
+import sk.dubrava.flightvisualizer.data.parser.SkyDemonKmlParser
 import sk.dubrava.flightvisualizer.data.parser.TxtCsvFlightParser
 import java.util.Locale
 
@@ -19,13 +21,46 @@ class FlightLoader(
 ) {
     companion object { private const val TAG = "FlightLoader" }
 
-    private val kmlParser             = KmlFlightParser(contentResolver)
-    private val txtCsvParser          = TxtCsvFlightParser(contentResolver)
-    private val arduinoTxtParser      = ArduinoTxtParser(contentResolver)
-    private val msfsCsvParser         = MsfsCsvParser(contentResolver)
-    private val droneCsvParser        = DroneCsvParser(contentResolver)
+    private val kmlParser               = KmlFlightParser(contentResolver)
+    private val skyDemonKmlParser       = SkyDemonKmlParser(contentResolver)
+    private val gpxParser               = GpxFlightParser(contentResolver)
+    private val txtCsvParser            = TxtCsvFlightParser(contentResolver)
+    private val arduinoTxtParser        = ArduinoTxtParser(contentResolver)
+    private val msfsCsvParser           = MsfsCsvParser(contentResolver)
+    private val droneCsvParser          = DroneCsvParser(contentResolver)
     private val garminAvionicsCsvParser = GarminAvionicsCsvParser(contentResolver)
 
+    // -----------------------------------------------------------------------
+    // KML variant detection — skenuje prvých 4 KB
+    // -----------------------------------------------------------------------
+    private enum class KmlType { WIW_CAMERA, GX_TRACK, UNKNOWN }
+
+    private fun detectKmlType(uri: Uri): KmlType {
+        val input = contentResolver.openInputStream(uri) ?: return KmlType.UNKNOWN
+        val preview = try {
+            val buf = ByteArray(4096)
+            val n = input.read(buf)
+            input.close()
+            if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
+        } catch (_: Exception) {
+            return KmlType.UNKNOWN
+        }
+
+        return when {
+            preview.contains("<Camera>", ignoreCase = true) ||
+                    preview.contains("<Camera ", ignoreCase = true) ->
+                KmlType.WIW_CAMERA
+            preview.contains("gx:Track", ignoreCase = true) ||
+                    preview.contains("gx:coord", ignoreCase = true) ->
+                KmlType.GX_TRACK
+            else ->
+                KmlType.UNKNOWN
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CSV variant detection
+    // -----------------------------------------------------------------------
     private enum class CsvType { GARMIN_AVIONICS, MSFS, DJI, AIRDATA, UNKNOWN }
 
     private fun detectCsvType(uri: Uri): CsvType {
@@ -57,11 +92,6 @@ class FlightLoader(
         }
     }
 
-    /**
-     * Skenuje prvých maxLines riadkov a vyberie ten, ktorý najlepšie zodpovedá
-     * telemetrickej hlavičke (score podľa prítomnosti kľúčových názvov stĺpcov).
-     * Podporuje "sep=;" prefix a automatickú detekciu oddeľovača.
-     */
     private fun readHeaderLowerScan(uri: Uri, maxLines: Int = 80): Set<String> {
         val input = contentResolver.openInputStream(uri) ?: return emptySet()
         val reader = input.bufferedReader()
@@ -84,26 +114,28 @@ class FlightLoader(
                 }
 
                 val delim = delimiter ?: sniffDelimiter(line)
+
                 val cols = line.split(delim).map { it.trim() }.filter { it.isNotEmpty() }
                 if (cols.size < 4) { linesRead++; continue }
 
-                val norm = cols.map { it.lowercase(Locale.ROOT) }.toSet()
+                val norm  = cols.map { it.lowercase(Locale.ROOT) }.toSet()
                 val score = headerScore(norm)
 
                 if (score > bestScore) {
                     bestScore = score
-                    bestLine = line
+                    bestLine  = line
                     delimiter = delim
                 }
 
                 if (bestScore >= 6) break
+
                 linesRead++
             }
 
             if (bestLine == null || delimiter == null) return emptySet()
 
-            return bestLine
-                .split(delimiter)
+            return bestLine!!
+                .split(delimiter!!)
                 .map { it.trim().lowercase(Locale.ROOT) }
                 .toSet()
         }
@@ -116,9 +148,13 @@ class FlightLoader(
 
     private fun headerScore(header: Set<String>): Int {
         val wanted = listOf(
-            "latitude", "lat", "longitude", "lon", "long",
-            "pitch", "roll", "heading", "hdg", "track", "trk",
-            "ias", "tas", "gndspd", "gs", "groundspeed",
+            "latitude", "lat",
+            "longitude", "lon", "long",
+            "pitch", "roll",
+            "heading", "hdg",
+            "track", "trk",
+            "ias", "tas",
+            "gndspd", "gs", "groundspeed",
             "vspd", "vs", "verticalspeed",
             "altb", "altmsl", "altgps", "altitude", "alt"
         )
@@ -127,18 +163,40 @@ class FlightLoader(
         return s
     }
 
+    // -----------------------------------------------------------------------
+    // Main load()
+    // -----------------------------------------------------------------------
     fun load(uri: Uri, mode: DerivedMode): List<FlightPoint> {
         val name = guessFileName(uri)?.lowercase(Locale.ROOT) ?: ""
 
         val parsed: List<FlightPoint> = when {
             name.endsWith(".kml") -> {
-                Log.i(TAG, "Parser=KML")
-                kmlParser.parse(uri)
+                when (detectKmlType(uri)) {
+                    KmlType.WIW_CAMERA -> {
+                        Log.i(TAG, "Parser=KML WIW Camera")
+                        kmlParser.parse(uri)
+                    }
+                    KmlType.GX_TRACK -> {
+                        Log.i(TAG, "Parser=KML gx:Track (SkyDemon)")
+                        skyDemonKmlParser.parse(uri)
+                    }
+                    KmlType.UNKNOWN -> {
+                        Log.i(TAG, "Parser=KML fallback → WIW Camera")
+                        kmlParser.parse(uri)
+                    }
+                }
             }
+
+            name.endsWith(".gpx") -> {
+                Log.i(TAG, "Parser=GPX (ForeFlight/Garmin Pilot/Air Navigation)")
+                gpxParser.parse(uri)
+            }
+
             name.endsWith(".txt") -> {
                 Log.i(TAG, "Parser=ArduinoTXT")
                 arduinoTxtParser.parse(uri)
             }
+
             name.endsWith(".csv") -> {
                 when (detectCsvType(uri)) {
                     CsvType.GARMIN_AVIONICS -> {
@@ -163,6 +221,7 @@ class FlightLoader(
                     }
                 }
             }
+
             else -> {
                 Log.i(TAG, "Parser=fallback (TxtCsvFlightParser)")
                 txtCsvParser.parse(uri)
@@ -173,27 +232,27 @@ class FlightLoader(
 
         if (mode == DerivedMode.RAW) {
             val rawOut = when (parsed.first().source) {
-                LogType.KML -> {
-                    // V RAW móde nullujeme veličiny dopočítané v parseri (tilt→pitch, dist/dt→speed)
-                    // rollDeg ponechávame — je priamo z Camera elementu
-                    parsed.map {
-                        it.copy(speedMps = null, vsMps = null, pitchDeg = null)
-                    }
+                LogType.KML,
+                LogType.KML_TRACK,
+                LogType.GPX -> {
+                    parsed.map { it.copy(speedMps = null, vsMps = null, pitchDeg = null) }
                 }
+
                 LogType.ARDUINO_TXT -> {
-                    // pitch/roll sú z akcelerometra, VS a speed sú dopočítané — v RAW nullujeme všetko
                     parsed.map {
                         it.copy(speedMps = null, vsMps = null, pitchDeg = null, rollDeg = null)
                     }
                 }
+
                 else -> parsed
             }
+
             Log.i(TAG, "Loaded points=${rawOut.size} (RAW)")
             return rawOut
         }
 
         val assisted = DataNormalizer.normalize(parsed)
-        Log.i(TAG, "Loaded points=${assisted.size} (ASSISTED)")
+        Log.i(TAG, "Loaded points=${assisted.size} (ASSISTED normalized)")
         return assisted
     }
 

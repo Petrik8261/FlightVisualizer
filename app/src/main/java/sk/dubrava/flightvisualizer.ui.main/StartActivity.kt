@@ -66,12 +66,13 @@ class StartActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnPickFile).setOnClickListener {
             pickFileLauncher.launch(
                 arrayOf(
-                    "application/vnd.google-earth.kml+xml",
-                    "text/plain",
-                    "text/csv",
-                    "application/csv",
-                    "*/*"
-                )
+         "application/vnd.google-earth.kml+xml",
+         "application/gpx+xml",
+         "text/plain",
+         "text/csv",
+         "application/csv",
+         "*/*"
+     )
             )
         }
 
@@ -124,6 +125,6 @@ class StartActivity : AppCompatActivity() {
 
     private fun isSupportedFile(nameOrUri: String): Boolean {
         val s = nameOrUri.lowercase(Locale.ROOT)
-        return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
+        return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv") || s.endsWith(".gpx")
     }
 }

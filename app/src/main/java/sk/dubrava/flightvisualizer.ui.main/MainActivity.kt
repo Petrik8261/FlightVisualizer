@@ -34,6 +34,7 @@ import sk.dubrava.flightvisualizer.core.GeoMath
 import sk.dubrava.flightvisualizer.data.model.FlightPoint
 import sk.dubrava.flightvisualizer.data.model.LogType
 import sk.dubrava.flightvisualizer.ui.importdata.DataSummaryActivity
+import sk.dubrava.flightvisualizer.ui.main.StartActivity
 import sk.dubrava.flightvisualizer.ui.widgets.AttitudeHudView
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -45,9 +46,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     companion object {
         private const val TAG = "MAIN"
 
-        private const val DEFAULT_DT_SEC = 0.2
+        private const val DEFAULT_DT_SEC  = 0.2
         private const val MIN_SEG_DUR_SEC = 0.02
-        private const val RENDER_HZ = 30.0
+        private const val RENDER_HZ       = 45.0
+        private const val CAMERA_HZ       = 20.0
 
         private const val CAM_ZOOM_ALPHA    = 0.12
         private const val CAM_BEARING_ALPHA = 0.18
@@ -57,6 +59,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val MPS_TO_FPM = 196.850394
     }
 
+    // -----------------------------
+    // Core state
+    // -----------------------------
     private var googleMap: GoogleMap? = null
 
     private lateinit var vehicleType: String
@@ -88,8 +93,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var segmentDurSec   = DEFAULT_DT_SEC
 
     private val renderIntervalNanos = (1_000_000_000L / RENDER_HZ).toLong()
+    private val cameraIntervalNanos = (1_000_000_000L / CAMERA_HZ).toLong()
     private var lastRenderNanos = 0L
+    private var lastCameraNanos = 0L
     private var lastFrameNanos  = 0L
+
+    private var segmentDurationsSec: DoubleArray = DoubleArray(0)
+    private var totalDurationCachedSec: Double   = 0.0
 
     private var smoothZoom:    Double? = null
     private var smoothBearing: Double? = null
@@ -98,6 +108,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var lastPosForCrs: LatLng? = null
 
     private var flightMarker: Marker? = null
+
     private var lastVsMpsStable: Double? = null
 
     private val choreographer by lazy { Choreographer.getInstance() }
@@ -111,12 +122,59 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun hasFrames(): Boolean = framesCount > 0
 
+    // GPS-only zdroje bez magnetometra — HDG = CRS
+    private fun isGpsOnlySource(source: LogType) =
+        source == LogType.ARDUINO_TXT || source == LogType.KML_TRACK || source == LogType.GPX
+
+    // -----------------------------
+    // Timing cache
+    // -----------------------------
+
+    private fun buildTimingCache() {
+        if (framesCount < 2) {
+            segmentDurationsSec    = DoubleArray(0)
+            totalDurationCachedSec = 0.0
+            return
+        }
+
+        val lastSeg = (framesCount - 2).coerceAtLeast(0)
+        segmentDurationsSec = DoubleArray(lastSeg + 1)
+
+        var sum = 0.0
+        for (i in 0..lastSeg) {
+            val b   = flightPoints.getOrNull(i + 1)
+            val dt  = b?.dtSec
+            val dur = if (dt != null && dt.isFinite() && dt > 0.0) dt else DEFAULT_DT_SEC
+            segmentDurationsSec[i] = dur
+            sum += dur
+        }
+        totalDurationCachedSec = sum
+    }
+
+    private fun segDurationSec(i: Int): Double =
+        segmentDurationsSec.getOrNull(i) ?: DEFAULT_DT_SEC
+
+    private fun totalDurationSec(): Double = totalDurationCachedSec
+
+    private fun resetVisualSmoothing(resetCamera: Boolean = true) {
+        lastPosForCrs   = null
+        lastCrsDeg      = null
+        lastVsMpsStable = null
+        if (resetCamera) {
+            smoothZoom    = null
+            smoothBearing = null
+        }
+    }
+
+    // -----------------------------
+    // Lifecycle
+    // -----------------------------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        setSupportActionBar(findViewById(R.id.toolbar))
+        setSupportActionBar(findViewById<Toolbar>(R.id.toolbar))
         supportActionBar?.title = ""
 
         flightHelper = FlightHelper(contentResolver)
@@ -174,6 +232,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         super.onDestroy()
     }
 
+    // -----------------------------
+    // Menu
+    // -----------------------------
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
         return true
@@ -187,6 +248,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    // -----------------------------
+    // Navigation / exit
+    // -----------------------------
     private fun beginExitMode() {
         if (isExiting) return
         isExiting = true
@@ -214,6 +278,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    // -----------------------------
+    // Map
+    // -----------------------------
     override fun onMapReady(map: GoogleMap) {
         googleMap = map
         googleMap?.mapType = GoogleMap.MAP_TYPE_SATELLITE
@@ -257,6 +324,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             return
         }
 
+        buildTimingCache()
+        resetVisualSmoothing(resetCamera = true)
+
         playbackSeekBar.max = lastFrameIndex
         playbackSeekBar.progress = 0
         playbackSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -287,6 +357,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         seekToIndex(0)
     }
 
+    // -----------------------------
+    // Playback
+    // -----------------------------
     private fun startPlayback() {
         if (isExiting || !hasFrames() || isPlaying) return
         isPlaying = true
@@ -294,6 +367,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         lastFrameNanos  = 0L
         lastRenderNanos = 0L
+        lastCameraNanos = 0L
 
         if (!isFrameCallbackPosted) {
             choreographer.postFrameCallback(frameCallback)
@@ -306,14 +380,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         btnPlay.text = "Play"
         choreographer.removeFrameCallback(frameCallback)
         isFrameCallbackPosted = false
-        lastFrameNanos = 0L
+        lastFrameNanos  = 0L
+        lastCameraNanos = 0L
     }
 
     private fun resetPlayback() {
-        lastVsMpsStable = null
         pausePlayback()
         if (!hasFrames()) return
 
+        resetVisualSmoothing(resetCamera = true)
         seekToTimeSec(0.0)
         playbackSeekBar.progress = 0
 
@@ -338,6 +413,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val total = totalDurationSec()
         if (playbackTimeSec >= total) {
             playbackTimeSec = total
+            seekToIndex(lastFrameIndex)
             isPlaying = false
             btnPlay.text = "Play"
             return
@@ -350,7 +426,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    private fun renderInterpolated() {
+    // -----------------------------
+    // Rendering (interpolated)
+    // -----------------------------
+    private fun renderInterpolated(frameTimeNanos: Long) {
         if (isExiting) return
         if (framesCount < 2) return
 
@@ -362,11 +441,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val tb = segmentT0Sec + segmentDurSec
         val tt = if (tb > ta) ((playbackTimeSec - ta) / (tb - ta)).coerceIn(0.0, 1.0) else 0.0
 
+        // Pozícia
         val lat = lerp(a.latitude,  b.latitude,  tt)
         val lon = lerp(a.longitude, b.longitude, tt)
         val pos = LatLng(lat, lon)
         flightMarker?.position = pos
 
+        // CRS z interpolovanej pozície
         val prevPos = lastPosForCrs
         val crs = if (prevPos != null) {
             val d = GeoMath.distanceMeters(prevPos, pos)
@@ -377,6 +458,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (crs != null) lastCrsDeg = crs
         lastPosForCrs = pos
 
+        // Pitch / Roll
         val pitchA = a.pitchDeg ?: 0.0
         val pitchB = b.pitchDeg ?: pitchA
         val rollA  = a.rollDeg  ?: 0.0
@@ -394,26 +476,29 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         attitudeView.pitchDeg = pitchForHud.toFloat()
         attitudeView.rollDeg  = roll.toFloat()
 
+        // Yaw / Heading
         val yawA = (a.yawDeg?.takeIf { it.isFinite() } ?: a.headingDeg?.takeIf { it.isFinite() })
             ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
         val yawB = (b.yawDeg?.takeIf { it.isFinite() } ?: b.headingDeg?.takeIf { it.isFinite() })
             ?: headingDegrees(LatLng(a.latitude, a.longitude), LatLng(b.latitude, b.longitude))
         val yaw = lerpAngleDeg(yawA, yawB, tt)
 
-        // ARDUINO_TXT nemá magnetometer — HDG sa rovná CRS aby nos sledoval skutočný smer letu
+        // GPS-only zdroje nemajú magnetometer — heading = CRS
         val hdgForDisplay = when {
-            a.source == LogType.ARDUINO_TXT && crs != null && crs.isFinite() -> crs.toDouble()
-            yaw.isFinite()                -> yaw
-            crs != null && crs.isFinite() -> crs.toDouble()
-            else                          -> 0.0
+            isGpsOnlySource(a.source) && crs != null && crs.isFinite() -> crs.toDouble()
+            yaw.isFinite()                                              -> yaw
+            crs != null && crs.isFinite()                               -> crs.toDouble()
+            else                                                        -> 0.0
         }
 
         attitudeView.headingDeg = norm360(hdgForDisplay).toFloat()
         flightMarker?.rotation  = norm360(hdgForDisplay).toFloat()
 
+        // Altitude
         val altM = lerp(a.altitudeM, b.altitudeM, tt)
         attitudeView.altitudeFt = (altM * M_TO_FT).toFloat()
 
+        // Speed
         val speedMps = when (derivedMode) {
             DerivedMode.RAW,
             DerivedMode.ASSISTED -> {
@@ -425,12 +510,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         attitudeView.speedKts = speedMps?.takeIf { it.isFinite() }?.let { (it * MPS_TO_KTS).toFloat() }
 
+        // Vertical Speed
         val vsMpsRaw = when (derivedMode) {
             DerivedMode.RAW,
             DerivedMode.ASSISTED -> a.vsMps?.takeIf { it.isFinite() }
         }
 
-        // Spike gate + EMA na vyhladzenie VS pre MSFS v ASSISTED móde
         val vsStableMps = if (derivedMode == DerivedMode.ASSISTED && a.source == LogType.MSFS) {
             if (vsMpsRaw == null) {
                 null
@@ -455,31 +540,39 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         attitudeView.vsFpm = vsStableMps?.let { (it * MPS_TO_FPM).toFloat() }
 
+        // Camera follow
         if (followCamera) {
             val map = googleMap ?: return
 
-            val baseTilt    = 55f
-            val pitchEffect = (pitch * 0.5).coerceIn(-8.0, 8.0)
-            val dynamicTilt = (baseTilt + pitchEffect.toFloat()).coerceIn(40f, 70f)
+            val altFactor   = (altM / 2000.0).coerceIn(0.0, 1.0)
+            val baseTilt    = lerp(65.0, 45.0, altFactor)
+            val pitchEffect = (pitch * 0.6).coerceIn(-10.0, 10.0)
+            val dynamicTilt = (baseTilt + pitchEffect).coerceIn(35.0, 75.0).toFloat()
 
-            val targetZoom = zoomFromAltMeters(altM)
+            val targetZoomBase = zoomFromAltMeters(altM)
+            val vsEffect   = ((vsMpsRaw ?: 0.0) * 0.015).coerceIn(-0.4, 0.4)
+            val targetZoom = (targetZoomBase - vsEffect).coerceIn(10.0, 19.0)
             smoothZoom = if (smoothZoom == null) targetZoom
             else ema(smoothZoom!!, targetZoom, CAM_ZOOM_ALPHA)
 
-            val rollEffect    = (roll * 0.25).coerceIn(-6.0, 6.0)
-            val targetBearing = norm360(yaw + rollEffect)
+            val rollEffect    = (roll * 0.4).coerceIn(-12.0, 12.0)
+            val targetBearing = norm360(hdgForDisplay + rollEffect)
             smoothBearing = if (smoothBearing == null) targetBearing
             else emaAngle(smoothBearing!!, targetBearing, CAM_BEARING_ALPHA)
 
-            val current = map.cameraPosition
-            val newPos = com.google.android.gms.maps.model.CameraPosition.Builder(current)
-                .target(pos)
-                .zoom(smoothZoom!!.toFloat())
-                .tilt(dynamicTilt)
-                .bearing(smoothBearing!!.toFloat())
-                .build()
+            if (lastCameraNanos == 0L || frameTimeNanos - lastCameraNanos >= cameraIntervalNanos) {
+                lastCameraNanos = frameTimeNanos
 
-            map.moveCamera(CameraUpdateFactory.newCameraPosition(newPos))
+                val current = map.cameraPosition
+                val newPos = com.google.android.gms.maps.model.CameraPosition.Builder(current)
+                    .target(pos)
+                    .zoom(smoothZoom!!.toFloat())
+                    .tilt(dynamicTilt)
+                    .bearing(smoothBearing!!.toFloat())
+                    .build()
+
+                map.moveCamera(CameraUpdateFactory.newCameraPosition(newPos))
+            }
         }
 
         if (playbackSeekBar.progress != i) playbackSeekBar.progress = i
@@ -503,7 +596,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
             if (lastRenderNanos == 0L || frameTimeNanos - lastRenderNanos >= renderIntervalNanos) {
                 lastRenderNanos = frameTimeNanos
-                renderInterpolated()
+                renderInterpolated(frameTimeNanos)
             }
 
             choreographer.postFrameCallback(this)
@@ -511,19 +604,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    private fun totalDurationSec(): Double {
-        val lastSeg = (framesCount - 2).coerceAtLeast(0)
-        var sum = 0.0
-        for (i in 0..lastSeg) sum += segDurationSec(i)
-        return sum
-    }
-
-    private fun segDurationSec(i: Int): Double {
-        val b = flightPoints.getOrNull(i + 1) ?: return DEFAULT_DT_SEC
-        val dt = b.dtSec
-        return if (dt.isFinite() && dt > 0.0) dt else DEFAULT_DT_SEC
-    }
-
+    // -----------------------------
+    // Seeking
+    // -----------------------------
     private fun seekToTimeSec(tSec: Double) {
         if (framesCount < 2) {
             playbackTimeSec = 0.0
@@ -553,6 +636,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun seekToIndex(i: Int) {
         if (!hasFrames()) return
+
+        resetVisualSmoothing(resetCamera = true)
+
         val idx = i.coerceIn(0, lastFrameIndex)
 
         val targetSeg = idx.coerceIn(0, (framesCount - 2).coerceAtLeast(0))
@@ -574,12 +660,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         attitudeView.pitchDeg = pitchHud.toFloat()
         attitudeView.rollDeg  = (fp.rollDeg ?: 0.0).toFloat()
 
-        // ARDUINO_TXT: HDG = smer k nasledujúcemu fixu, konzistentné s renderInterpolated
+        // GPS-only: HDG = smer odchodu z bodu
         val yaw = when {
-            fp.source == LogType.ARDUINO_TXT && idx < lastFrameIndex ->
+            isGpsOnlySource(fp.source) && idx < lastFrameIndex ->
                 headingDegrees(routeLatLng[idx], routeLatLng[idx + 1])
-            fp.yawDeg?.isFinite() == true     -> fp.yawDeg
-            fp.headingDeg?.isFinite() == true -> fp.headingDeg
+            fp.yawDeg?.isFinite() == true     -> fp.yawDeg!!
+            fp.headingDeg?.isFinite() == true -> fp.headingDeg!!
             idx > 0 -> headingDegrees(routeLatLng[idx - 1], routeLatLng[idx])
             else    -> 0.0
         }
@@ -598,6 +684,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (playbackSeekBar.progress != idx) playbackSeekBar.progress = idx
     }
 
+    // -----------------------------
+    // Polyline
+    // -----------------------------
     private fun drawRoute(points: List<LatLng>) {
         val map = googleMap ?: return
         if (points.size < 2) return
@@ -610,6 +699,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         )
     }
 
+    // -----------------------------
+    // Google Play Services
+    // -----------------------------
     private fun checkGooglePlayServices(): Boolean {
         val api    = GoogleApiAvailability.getInstance()
         val result = api.isGooglePlayServicesAvailable(this)
@@ -621,6 +713,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    // -----------------------------
+    // Utilities
+    // -----------------------------
     private fun scaledMarker(resId: Int, widthDp: Int, heightDp: Int): BitmapDescriptor =
         BitmapDescriptorFactory.fromBitmap(
             android.graphics.Bitmap.createScaledBitmap(
