@@ -13,12 +13,12 @@ Android aplikácia na vizualizáciu letových záznamov. Umožňuje načítať t
 
 | Formát | Zdroj |
 |--------|-------|
-| KML | WIW GPS logger / Google Earth |
+| KML | Mobilný záznamník GPS logger / Google Earth |
 | CSV | Microsoft Flight Simulator (SkyDolly) |
-| CSV | Garmin avionics (G1000 / G3X Touch) |
+| CSV | Garmin avionics (G1000 / G3X Touch), Dynon Skyview |
 | CSV | DJI FlightRecord |
 | CSV | AirData UAV |
-| TXT | Arduino GPS + IMU logger |
+| TXT | Experimentálny Arduino GPS + IMU logger |
 
 ## Požiadavky
 
