@@ -10,7 +10,6 @@
     android:paddingBottom="18dp"
     android:background="#000000">
 
-    <!-- Title (center, ako úvodná) -->
     <TextView
         android:id="@+id/tvAppTitle"
         android:layout_width="match_parent"
@@ -32,7 +31,6 @@
         android:gravity="center"
         android:textColor="#BDBDBD" />
 
-    <!-- Button: Vybrať súbor (štýl z importu, farby ako intro) -->
     <Button
         android:id="@+id/btnPickFile"
         android:layout_width="match_parent"
@@ -44,7 +42,6 @@
         android:textColor="#000000"
         android:backgroundTint="#FFC107" />
 
-    <!-- Popis ako v importe -->
     <TextView
         android:id="@+id/tvHelp"
         android:layout_width="match_parent"
@@ -54,7 +51,6 @@
         android:textSize="16sp"
         android:textColor="#E0E0E0" />
 
-    <!-- Vybraný súbor -->
     <TextView
         android:id="@+id/tvSelectedLabel"
         android:layout_width="match_parent"
@@ -74,7 +70,6 @@
         android:textSize="16sp"
         android:textColor="#BDBDBD" />
 
-    <!-- Vymazať výber (šedé ako LIETADLO z úvodnej) -->
     <Button
         android:id="@+id/btnClearSelection"
         android:layout_width="match_parent"
@@ -86,17 +81,27 @@
         android:textColor="#FFFFFF"
         android:backgroundTint="#616161" />
 
-    <!-- Spacer aby KONIEC bolo úplne dole -->
     <View
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <!-- KONIEC dole (červené ako pôvodne) -->
+    <Button
+        android:id="@+id/btnAbout"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="8dp"
+        android:text="O APLIKÁCII"
+        android:textAllCaps="true"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#0E1733" />
+
     <Button
         android:id="@+id/btnExit"
         android:layout_width="match_parent"
         android:layout_height="56dp"
+        android:layout_marginTop="8dp"
         android:text="KONIEC"
         android:textAllCaps="true"
         android:textStyle="bold"

@@ -15,21 +15,52 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Parser pre Garmin avionické CSV záznamy (G1000 / G3X Touch).
+ * Parser pre avionické CSV záznamy z Garmin G1000 / G3X Touch a Dynon SkyView.
  *
- * Štruktúra G1000 CSV:
- *   Riadok 1: informácie o lietadle (preskočíme)
- *   Riadok 2: hlavička stĺpcov
- *   Riadok 3: jednotky (ft, kt, fpm, deg) — detekujeme a preskočíme
- *   Riadok 4+: dáta, 1 Hz
+ * Oba systémy exportujú CSV s hlavičkovým riadkom, ale líšia sa konvenciou názvov stĺpcov:
+ *   - Garmin používa krátke identifikátory: IAS, VSpd, HDG, TRK, AltB, GndSpd, ...
+ *   - Dynon SkyView (Revision AT) používa čitateľné názvy s jednotkami v zátvorkách:
+ *     "Indicated Airspeed (knots)", "Vert Speed (ft./min)", "Magnetic Heading (deg)", ...
+ * Parser detekuje formát automaticky cez skórovanie hlavičky a normalizáciu názvov.
  *
- * Kľúčové mapovanie:
- *   HDG   → magnetický smer nosa z AHRS
- *   TRK   → GPS track (smer pohybu nad zemou)
- *   VSpd  → barometrická VS (preferovaná)
- *   VSpdG → GPS VS (fallback ak VSpd chýba)
- *   AltB  → barometrická výška (prioritná), AltMSL/AltGPS ako fallback
- *   CRS   sa zámerne ignoruje — je to HSI selected course, nie GPS track
+ * Štruktúra Garmin G1000 CSV (overená z letových záznamov):
+ *   Riadok 1:  airplane info (registrácia, model, sériové číslo — preskočíme)
+ *   Riadok 2:  hlavička stĺpcov:
+ *              Lcl Date, Lcl Time, UTCOfst, AtvWpt, Latitude, Longitude,
+ *              AltB, BaroA, AltMSL, OAT, IAS, GndSpd, VSpd, Pitch, Roll,
+ *              LatAc, NormAc, HDG, TRK, ..., AltGPS, TAS, ..., VSpdG, ...
+ *   Riadok 3:  jednotky (ft, kt, fpm, deg, ...) — explicitne preskočíme
+ *   Riadok 4+: dáta, vzorkovanie 1 Hz
+ *
+ * Štruktúra Dynon SkyView CSV (podľa SkyView System Installation Guide, Revision AT):
+ *   Riadok 1:  hlavička stĺpcov — viac ako 100 polí vrátane EMS vstupov:
+ *              System Time, Pitch (deg), Roll (deg), Magnetic Heading (deg),
+ *              Indicated Airspeed (knots), Pressure Altitude (ft.),
+ *              Vert Speed (ft./min), GPS Latitude (deg), GPS Longitude (deg),
+ *              GPS Altitude (ft.), GPS Speed (knots), GPS Track (deg), ...
+ *   Riadok 2+: dáta, vzorkovanie konfigurovateľné (1–16 Hz)
+ *   Poznámka:  SkyView exportuje iba čas (System Time), nie dátum — absolútne
+ *              timestampy nie sú k dispozícii, časová os sa rekonštruuje z dt.
+ *
+ * Mapovanie kľúčových stĺpcov (oba formáty):
+ *   HDG / Magnetic Heading    → Field.HEADING — magnetický smer nosa z AHRS
+ *   TRK / GPS Track           → Field.TRACK   — smer pohybu nad zemou
+ *   IAS / Indicated Airspeed  → Field.IAS     — rýchlosť pre HUD
+ *   TAS / True Airspeed       → Field.TAS
+ *   GndSpd / GPS Speed        → Field.GS
+ *   VSpd / Vert Speed         → Field.VS      — barometrická (preferovaná)
+ *   VSpdG                     → Field.VS      — GPS fallback (len G1000)
+ *   AltB / Pressure Altitude  → Field.ALT_BARO — prioritná pre zobrazenie
+ *   AltMSL                    → Field.ALT_MSL  — fallback
+ *   AltGPS / GPS Altitude     → Field.ALT_GPS  — fallback
+ *
+ * Stĺpce ktoré parser zámerne ignoruje:
+ *   CRS  — HSI selected course (≠ GPS track, je to zvolený kurz pre NAV)
+ *   MagVar — magnetická variácia (nepotrebná pre vizualizáciu)
+ *   WndSpd/WndDr — vietor (nepotrebný pre HUD)
+ *   BaroA — nastavenie výškomera (nepotrebné)
+ *   LatAc/NormAc — G-sily (nepotrebné)
+ *   E1 * — motorové parametre (mimo rozsahu appky)
  */
 class GarminAvionicsCsvParser(
     private val contentResolver: ContentResolver
@@ -61,13 +92,23 @@ class GarminAvionicsCsvParser(
         val sourceLine: Int
     )
 
+    // -----------------------------------------------------------------------
+    // Verejné API
+    // -----------------------------------------------------------------------
+
     fun parse(uri: Uri): List<FlightPoint> {
         val input = contentResolver.openInputStream(uri) ?: return emptyList()
         return input.use {
-            parseToFlightPoints(input = it, preferIasOverGs = true, fallbackDtSec = 1.0, source = LogType.GARMIN_AVIONICS)
+            parseToFlightPoints(
+                input            = it,
+                preferIasOverGs  = true,
+                fallbackDtSec    = 1.0,
+                source           = LogType.GARMIN_AVIONICS
+            )
         }
     }
 
+    /** RAW parse — ponechané pre debug/analýzu */
     fun parse(input: InputStream): List<FlightPointRaw> {
         BufferedReader(InputStreamReader(input)).use { br ->
             val allLines = mutableListOf<String>()
@@ -75,7 +116,7 @@ class GarminAvionicsCsvParser(
             while (true) { line = br.readLine() ?: break; allLines.add(line) }
             if (allLines.isEmpty()) return emptyList()
 
-            val delimiter = detectDelimiter(allLines)
+            val delimiter              = detectDelimiter(allLines)
             val (headerIndex, headerCells) = findHeader(allLines, delimiter)
 
             if (headerIndex < 0) {
@@ -83,14 +124,17 @@ class GarminAvionicsCsvParser(
                 return emptyList()
             }
 
+            // G1000 má units riadok hneď za hlavičkou — zistíme ho a preskočíme
             val unitsRowIndex = detectUnitsRow(allLines, headerIndex, headerCells, delimiter)
-            val columnIndex   = buildColumnIndex(headerCells)
-            val out           = ArrayList<FlightPointRaw>(allLines.size.coerceAtMost(50_000))
+
+            val columnIndex = buildColumnIndex(headerCells)
+            val out         = ArrayList<FlightPointRaw>(allLines.size.coerceAtMost(50_000))
 
             for (i in headerIndex + 1 until allLines.size) {
-                if (i == unitsRowIndex) continue
+                if (i == unitsRowIndex) continue          // ← preskoč units riadok
                 val raw = allLines[i].trim()
-                if (raw.isEmpty() || raw.startsWith("sep=", ignoreCase = true)) continue
+                if (raw.isEmpty()) continue
+                if (raw.startsWith("sep=", ignoreCase = true)) continue
 
                 val cells = splitCsvLine(raw, delimiter)
                 if (cells.isEmpty()) continue
@@ -102,6 +146,10 @@ class GarminAvionicsCsvParser(
             return out
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Delimiter + header detection
+    // -----------------------------------------------------------------------
 
     private fun detectDelimiter(lines: List<String>): Char {
         for (i in 0 until minOf(lines.size, 3)) {
@@ -140,8 +188,11 @@ class GarminAvionicsCsvParser(
     }
 
     /**
-     * Detekuje units riadok G1000/G3X (hneď za hlavičkou).
-     * Ak bunky na pozíciách lat/lon nie sú čísla (napr. obsahujú "deg"), považuje riadok za units.
+     * Detekuje G1000/G3X units riadok (hneď za hlavičkou).
+     * Units riadok obsahuje jednotky ako "ft", "kt", "fpm", "deg" namiesto čísel.
+     * Ak nasledujúci riadok za hlavičkou nie je parsovateľný ako dáta (lat/lon sú
+     * textové jednotky), považujeme ho za units riadok a vrátime jeho index.
+     * Inak vrátime -1.
      */
     private fun detectUnitsRow(
         lines: List<String>,
@@ -155,7 +206,9 @@ class GarminAvionicsCsvParser(
         val row = lines[candidateIdx].trim()
         if (row.isEmpty()) return -1
 
-        val cells    = splitCsvLine(row, delimiter)
+        val cells = splitCsvLine(row, delimiter)
+
+        // Ak bunky na pozíciách lat/lon nie sú čísla, je to units riadok
         val colIndex = buildColumnIndex(headerCells)
         val latIdx   = colIndex.byField[Field.LAT]
         val lonIdx   = colIndex.byField[Field.LON]
@@ -169,19 +222,30 @@ class GarminAvionicsCsvParser(
         return if (!latIsNumeric && !lonIsNumeric) {
             Log.i(TAG, "Units row detected at line=${candidateIdx + 1}: lat='$latCell', lon='$lonCell'")
             candidateIdx
-        } else -1
+        } else {
+            -1
+        }
     }
 
     private fun headerScore(normHeaders: List<String>): Int {
         val want = setOf(
-            "latitude", "lat", "longitude", "lon", "long",
-            "pitch", "roll", "hdg", "heading", "trk", "track", "course",
-            "ias", "tas", "gndspd", "gs", "groundspeed", "gspd",
-            "vspd", "verticalspeed", "vertical_speed", "vs", "vspdg",
-            "altb", "altmsl", "altgps", "altitude", "baroalt", "alt"
+            "latitude", "lat", "gpslat", "longitude", "lon", "long", "gpslon",
+            "pitch", "roll",
+            "hdg", "heading", "magneticheading",
+            "trk", "track", "course", "gpstrack",
+            "ias", "tas", "airspeed", "indicatedairspeed", "trueairspeed",
+            "gndspd", "gs", "groundspeed", "gspd", "gpsspeed",
+            "vspd", "verticalspeed", "vertical_speed", "vs", "vspdg", "vertspeed",
+            "altb", "altmsl", "altgps", "altitude", "baroalt", "alt",
+            "pressurealtitude", "gpsaltitude",
+            "lcltime", "time", "systemtime"
         )
         return normHeaders.count { it in want }
     }
+
+    // -----------------------------------------------------------------------
+    // Column mapping
+    // -----------------------------------------------------------------------
 
     private data class ColIndex(val byField: Map<Field, Int>)
 
@@ -189,7 +253,8 @@ class GarminAvionicsCsvParser(
         DATE, TIME, UTC_OFFSET, UTC_TIME, TIMESTAMP,
         LAT, LON,
         ALT_MSL, ALT_GPS, ALT_BARO, ALT_GENERIC,
-        GS, IAS, TAS, VS,
+        GS, IAS, TAS,
+        VS,
         HEADING, TRACK,
         PITCH, ROLL
     }
@@ -199,37 +264,61 @@ class GarminAvionicsCsvParser(
 
         headerCells.forEachIndexed { idx, raw ->
             val h = normalizeHeader(raw)
+
             when (h) {
-                "lcldate", "date", "localdate"                            -> map.putIfAbsent(Field.DATE, idx)
-                "lcltime", "time", "localtime"                            -> map.putIfAbsent(Field.TIME, idx)
+                // čas
+                "lcldate", "date", "localdate"                          -> map.putIfAbsent(Field.DATE, idx)
+                // Dynon SkyView: "System Time" → "systemtime" (obsahuje čas bez dátumu)
+                "lcltime", "time", "localtime", "systemtime"            -> map.putIfAbsent(Field.TIME, idx)
                 "utcofst", "utcoffset", "utc_offset", "utcplus", "utcoff" -> map.putIfAbsent(Field.UTC_OFFSET, idx)
-                "utc", "utctime"                                          -> map.putIfAbsent(Field.UTC_TIME, idx)
-                "timestamp", "timeutc", "epochtime", "unix"               -> map.putIfAbsent(Field.TIMESTAMP, idx)
+                "utc", "utctime"                                        -> map.putIfAbsent(Field.UTC_TIME, idx)
+                "timestamp", "timeutc", "epochtime", "unix"             -> map.putIfAbsent(Field.TIMESTAMP, idx)
 
-                "latitude", "lat"                                         -> map.putIfAbsent(Field.LAT, idx)
-                "longitude", "lon", "long"                                -> map.putIfAbsent(Field.LON, idx)
+                // poloha
+                // G1000/G3X: "Latitude", "Longitude"
+                // Dynon SkyView: "GPS Latitude (deg)" → "gpslat[itude]", "GPS Longitude (deg)" → "gpslon[gitude]"
+                "latitude", "lat", "gpslatitude", "gpslat" -> map.putIfAbsent(Field.LAT, idx)
+                "longitude", "lon", "long",
+                "gpslongitude", "gpslon"            -> map.putIfAbsent(Field.LON, idx)
 
-                // priorita výšky: barometrická > MSL > GPS > generická
-                "altb", "baroalt", "altbaro", "alt_baro", "altitude_baro" -> map.putIfAbsent(Field.ALT_BARO, idx)
-                "altmsl", "mslalt", "alt_msl"                             -> map.putIfAbsent(Field.ALT_MSL, idx)
-                "altgps", "gpsalt", "alt_gps"                             -> map.putIfAbsent(Field.ALT_GPS, idx)
-                "altitude", "alt"                                         -> map.putIfAbsent(Field.ALT_GENERIC, idx)
+                // výška — priorita: barometrická > MSL > GPS > generická
+                // Dynon SkyView: "Pressure Altitude (ft.)" → "pressurealtitude"
+                // Dynon SkyView: "GPS Altitude (ft.)" → "gpsaltitude"
+                "altb", "baroalt", "altbaro", "alt_baro", "altitude_baro",
+                "pressurealtitude"                  -> map.putIfAbsent(Field.ALT_BARO, idx)
+                "altmsl", "mslalt", "alt_msl"       -> map.putIfAbsent(Field.ALT_MSL, idx)
+                "altgps", "gpsalt", "alt_gps",
+                "gpsaltitude"                       -> map.putIfAbsent(Field.ALT_GPS, idx)
+                "altitude", "alt"                   -> map.putIfAbsent(Field.ALT_GENERIC, idx)
 
-                "gndspd", "groundspeed", "gs", "gspd"                    -> map.putIfAbsent(Field.GS, idx)
-                "ias"                                                     -> map.putIfAbsent(Field.IAS, idx)
-                "tas"                                                     -> map.putIfAbsent(Field.TAS, idx)
+                // rýchlosti
+                // G1000/G3X: "GndSpd", "IAS", "TAS"
+                // Dynon SkyView: "GPS Speed (knots)" → "gpsspeed", "Indicated Airspeed (knots)" → "indicatedairspeed"
+                //                "True Airspeed (knots)" → "trueairspeed"
+                "gndspd", "groundspeed", "gs", "gspd",
+                "gpsspeed", "gpsgndspd"             -> map.putIfAbsent(Field.GS, idx)
+                "ias", "airspeed", "indicatedairspeed" -> map.putIfAbsent(Field.IAS, idx)
+                "tas", "trueairspeed"               -> map.putIfAbsent(Field.TAS, idx)
 
-                // VSpd = barometrická VS, VSpdG = GPS VS (fallback)
-                // putIfAbsent zabezpečí prednosť VSpd pred VSpdG
+                // vertikálna rýchlosť
+                // G1000/G3X: "VSpd" (barometrická, preferovaná), "VSpdG" (GPS fallback)
+                // Dynon SkyView: "Vert Speed (ft./min)" → "vertspeed"
+                //                "Vertical Speed (ft./min)" → "verticalspeed"
                 "vspd", "verticalspeed", "vertical_speed", "vs",
-                "vspdg"                                                   -> map.putIfAbsent(Field.VS, idx)
+                "vspdg", "vertspeed"                -> map.putIfAbsent(Field.VS, idx)
 
-                // CRS (HSI selected course) sa zámerne ignoruje
-                "hdg", "heading"                                          -> map.putIfAbsent(Field.HEADING, idx)
-                "trk", "track", "course"                                  -> map.putIfAbsent(Field.TRACK, idx)
+                // smer
+                // G1000/G3X: "HDG" (magnetický heading), "TRK" (GPS track)
+                // Dynon SkyView: "Magnetic Heading (deg)" → "magneticheading"
+                //                "GPS Track (deg)" → "gpstrack"
+                // NE mapujeme "crs" (= HSI selected course, nie smer pohybu)
+                "hdg", "heading", "magneticheading" -> map.putIfAbsent(Field.HEADING, idx)
+                "trk", "track", "course",
+                "gpstrack", "gpscourse"             -> map.putIfAbsent(Field.TRACK, idx)
 
-                "pitch"                                                   -> map.putIfAbsent(Field.PITCH, idx)
-                "roll"                                                    -> map.putIfAbsent(Field.ROLL, idx)
+                // postoj
+                "pitch"                             -> map.putIfAbsent(Field.PITCH, idx)
+                "roll"                              -> map.putIfAbsent(Field.ROLL, idx)
             }
         }
 
@@ -238,15 +327,21 @@ class GarminAvionicsCsvParser(
     }
 
     private fun normalizeHeader(s: String): String =
-        s.trim().lowercase()
+        s.trim()
+            .lowercase()
             .replace("\uFEFF", "")
             .replace("°", "")
             .replace("(deg)", "").replace("(degrees)", "")
             .replace("(kt)", "").replace("(kts)", "").replace("(knots)", "")
-            .replace("(ft)", "").replace("(m)", "")
-            .replace("(ft/min)", "").replace("(fpm)", "")
+            .replace("(ft.)", "").replace("(ft)", "").replace("(m)", "")
+            // Dynon SkyView používa "(ft./min)" so bodkou — musí byť pred "(ft/min)"
+            .replace("(ft./min)", "").replace("(ft/min)", "").replace("(fpm)", "")
             .replace("[^a-z0-9_]".toRegex(), "")
             .replace("__", "_")
+
+    // -----------------------------------------------------------------------
+    // Row parsing
+    // -----------------------------------------------------------------------
 
     private fun parseRow(cells: List<String>, col: ColIndex, sourceLine: Int): FlightPointRaw? {
         fun get(field: Field): String? {
@@ -272,10 +367,10 @@ class GarminAvionicsCsvParser(
             parseAltitudeToMeters(get(Field.ALT_GENERIC))
         )
 
-        val gs  = parseSpeedToMps(get(Field.GS))
-        val ias = parseSpeedToMps(get(Field.IAS))
-        val tas = parseSpeedToMps(get(Field.TAS))
-        val vs  = parseVerticalSpeedToMps(get(Field.VS))
+        val gs      = parseSpeedToMps(get(Field.GS))
+        val ias     = parseSpeedToMps(get(Field.IAS))
+        val tas     = parseSpeedToMps(get(Field.TAS))
+        val vs      = parseVerticalSpeedToMps(get(Field.VS))
 
         val heading = normalizeAngle(parseDouble(get(Field.HEADING)))
         val track   = normalizeAngle(parseDouble(get(Field.TRACK)))
@@ -286,19 +381,31 @@ class GarminAvionicsCsvParser(
         val vsSafe = if (vs != null && abs(msToFpm(vs)) > MAX_ABS_VS_FTPM) null else vs
 
         return FlightPointRaw(
-            timeMillis = timeMillis, lat = lat, lon = lon, altM = alt,
-            gsMps = gsSafe, vsMps = vsSafe,
-            headingDeg = heading, trackDeg = track,
-            pitchDeg = pitch, rollDeg = roll,
-            iasMps = ias, tasMps = tas,
-            sourceLine = sourceLine
+            timeMillis  = timeMillis,
+            lat         = lat,
+            lon         = lon,
+            altM        = alt,
+            gsMps       = gsSafe,
+            vsMps       = vsSafe,
+            headingDeg  = heading,
+            trackDeg    = track,
+            pitchDeg    = pitch,
+            rollDeg     = roll,
+            iasMps      = ias,
+            tasMps      = tas,
+            sourceLine  = sourceLine
         )
     }
+
+    // -----------------------------------------------------------------------
+    // Time parsing
+    // -----------------------------------------------------------------------
 
     private fun parseTimeMillis(
         dateStr: String?, timeStr: String?,
         utcOffsetStr: String?, utcTimeStr: String?, timestampStr: String?
     ): Long? {
+        // 1) epoch timestamp
         parseDouble(timestampStr)?.let { ts ->
             val l = ts.toLong()
             return when {
@@ -308,6 +415,7 @@ class GarminAvionicsCsvParser(
             }
         }
 
+        // 2) ISO UTC timestamp
         if (!utcTimeStr.isNullOrBlank()) {
             val s = utcTimeStr.trim()
             try {
@@ -316,6 +424,7 @@ class GarminAvionicsCsvParser(
             } catch (_: Exception) { }
         }
 
+        // 3) G1000 štýl: Lcl Date + Lcl Time + UTCOfst
         if (!dateStr.isNullOrBlank() && !timeStr.isNullOrBlank()) {
             val date   = parseLocalDate(dateStr.trim()) ?: return null
             val time   = parseLocalTime(timeStr.trim()) ?: return null
@@ -361,6 +470,10 @@ class GarminAvionicsCsvParser(
         return try { ZoneOffset.of(t) } catch (_: Exception) { null }
     }
 
+    // -----------------------------------------------------------------------
+    // Unit conversions
+    // -----------------------------------------------------------------------
+
     private fun parseAltitudeToMeters(s: String?) = parseDouble(s)?.let { it * 0.3048 }
     private fun parseSpeedToMps(s: String?)        = parseDouble(s)?.let { it * 0.514444 }
     private fun parseVerticalSpeedToMps(s: String?)= parseDouble(s)?.let { it * 0.00508 }
@@ -368,7 +481,8 @@ class GarminAvionicsCsvParser(
     private fun gsToKt(mps: Double)  = mps / 0.514444
     private fun msToFpm(mps: Double) = mps / 0.00508
 
-    private fun sanitizeAngle(v: Double?, maxAbs: Double) = v?.takeIf { abs(it) <= maxAbs }
+    private fun sanitizeAngle(v: Double?, maxAbs: Double) =
+        v?.takeIf { abs(it) <= maxAbs }
 
     private fun normalizeAngle(v: Double?): Double? {
         if (v == null) return null
@@ -379,6 +493,10 @@ class GarminAvionicsCsvParser(
 
     private fun firstNonNull(vararg v: Double?) = v.firstOrNull { it != null }
 
+    // -----------------------------------------------------------------------
+    // CSV split
+    // -----------------------------------------------------------------------
+
     private fun splitCsvLine(line: String, delimiter: Char): List<String> {
         val out = ArrayList<String>()
         val sb  = StringBuilder()
@@ -387,10 +505,12 @@ class GarminAvionicsCsvParser(
         while (i < line.length) {
             val c = line[i]
             when {
-                c == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> { sb.append('"'); i++ }
-                c == '"'                -> inQuotes = !inQuotes
+                c == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
+                    sb.append('"'); i++
+                }
+                c == '"'       -> inQuotes = !inQuotes
                 !inQuotes && c == delimiter -> { out.add(sb.toString()); sb.setLength(0) }
-                else                   -> sb.append(c)
+                else           -> sb.append(c)
             }
             i++
         }
@@ -402,6 +522,10 @@ class GarminAvionicsCsvParser(
         if (s.isNullOrBlank()) return null
         return s.trim().replace("\uFEFF", "").replace(" ", "").replace(",", ".").toDoubleOrNull()
     }
+
+    // -----------------------------------------------------------------------
+    // RAW → FlightPoint
+    // -----------------------------------------------------------------------
 
     fun parseToFlightPoints(
         input: InputStream,
@@ -421,6 +545,7 @@ class GarminAvionicsCsvParser(
             val lon = p.lon ?: return@mapIndexedNotNull null
 
             val absSec = p.timeMillis?.let { it / 1000.0 }
+
             val tSec: Double
             val dtSec: Double
 
@@ -430,15 +555,17 @@ class GarminAvionicsCsvParser(
                 lastAbsSec = absSec
                 lastTSec   = tSec
             } else {
-                dtSec    = if (idx == 0) 0.0 else fallbackDtSec
-                tSec     = if (idx == 0) 0.0 else lastTSec + dtSec
-                lastTSec = tSec
+                dtSec     = if (idx == 0) 0.0 else fallbackDtSec
+                tSec      = if (idx == 0) 0.0 else lastTSec + dtSec
+                lastTSec  = tSec
             }
 
-            // HDG = magnetický heading z AHRS, TRK = GPS track ako fallback pre yaw
-            // IAS preferujeme pred GndSpd — je to rýchlosť relevantná pre pilota
+            // HDG = magnetický heading z AHRS (Field.HEADING)
+            // TRK = GPS track (Field.TRACK) — použijeme ako yawDeg fallback
             val heading  = p.headingDeg
             val yaw      = heading ?: p.trackDeg
+
+            // Rýchlosť: preferuj IAS (to čo pilot vidí) pred GndSpd
             val speedMps = if (preferIasOverGs) (p.iasMps ?: p.gsMps) else (p.gsMps ?: p.iasMps)
 
             FlightPoint(

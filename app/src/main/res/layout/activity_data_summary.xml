@@ -5,7 +5,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Scrollovateľný obsah -->
     <androidx.core.widget.NestedScrollView
         android:id="@+id/scroll"
         android:layout_width="0dp"
@@ -135,7 +134,6 @@
                 android:text="Estimated hodnoty budú vypočítané z dostupných údajov."
                 android:textSize="13sp" />
 
-            <!-- dno scroll obsahu - nech nie je prikryté panelom -->
             <View
                 android:layout_width="match_parent"
                 android:layout_height="12dp" />
@@ -143,7 +141,6 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Pevný spodný panel -->
     <LinearLayout
         android:id="@+id/bottomBar"
         android:layout_width="0dp"
@@ -155,12 +152,14 @@
         app:layout_constraintEnd_toEndOf="parent">
 
         <LinearLayout
+            style="?android:attr/buttonBarStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
             <Button
                 android:id="@+id/btnBack"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -168,6 +167,7 @@
 
             <Button
                 android:id="@+id/btnStart"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"

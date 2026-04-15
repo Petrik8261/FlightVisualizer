@@ -68,6 +68,7 @@
             android:layout_height="wrap_content" />
 
         <LinearLayout
+            style="?android:attr/buttonBarStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -76,6 +77,7 @@
 
             <Button
                 android:id="@+id/btnStepBack"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:minWidth="56dp"
@@ -86,6 +88,7 @@
 
             <Button
                 android:id="@+id/btnPlay"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:minWidth="72dp"
@@ -97,6 +100,7 @@
 
             <Button
                 android:id="@+id/btnStop"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:minWidth="72dp"
@@ -108,6 +112,7 @@
 
             <Button
                 android:id="@+id/btnStepForward"
+                style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:minWidth="56dp"

@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import sk.dubrava.flightvisualizer.R
 import sk.dubrava.flightvisualizer.core.AppNav
+import sk.dubrava.flightvisualizer.ui.about.AboutActivity
 import sk.dubrava.flightvisualizer.ui.importdata.DataSummaryActivity
 import java.util.Locale
 
@@ -66,13 +67,12 @@ class StartActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnPickFile).setOnClickListener {
             pickFileLauncher.launch(
                 arrayOf(
-         "application/vnd.google-earth.kml+xml",
-         "application/gpx+xml",
-         "text/plain",
-         "text/csv",
-         "application/csv",
-         "*/*"
-     )
+                    "application/vnd.google-earth.kml+xml",
+                    "text/plain",
+                    "text/csv",
+                    "application/csv",
+                    "*/*"
+                )
             )
         }
 
@@ -80,6 +80,10 @@ class StartActivity : AppCompatActivity() {
             selectedUri = null
             tvSelectedFile.text = "(žiadny)"
             updateClearButtonState()
+        }
+
+        findViewById<Button>(R.id.btnAbout).setOnClickListener {
+            startActivity(Intent(this, AboutActivity::class.java))
         }
 
         findViewById<Button>(R.id.btnExit).setOnClickListener {
@@ -98,7 +102,6 @@ class StartActivity : AppCompatActivity() {
 
     private fun openSummary(uri: Uri, displayName: String) {
         val vehicleType = AppNav.VEHICLE_PLANE
-
         val i = Intent(this, DataSummaryActivity::class.java).apply {
             putExtra(AppNav.EXTRA_VEHICLE_TYPE, vehicleType)
             putExtra(AppNav.EXTRA_FILE_URI, uri.toString())
@@ -125,6 +128,6 @@ class StartActivity : AppCompatActivity() {
 
     private fun isSupportedFile(nameOrUri: String): Boolean {
         val s = nameOrUri.lowercase(Locale.ROOT)
-        return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv") || s.endsWith(".gpx")
+        return s.endsWith(".kml") || s.endsWith(".txt") || s.endsWith(".csv")
     }
 }
