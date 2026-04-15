@@ -29,7 +29,6 @@ object DataNormalizer {
 
         return when (points.first().source) {
             LogType.GARMIN_AVIONICS,
-            LogType.KML_TRACK,
             LogType.GPX -> derived
             else        -> smoothHud(derived)
         }

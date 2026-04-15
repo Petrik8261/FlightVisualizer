@@ -74,11 +74,21 @@ class SkyDemonKmlParser(
             rawPoints += Raw(tMs, lat, lon, altM)
         }
 
-        // Zoradiť podľa času + odstrániť duplicitné body (rovnaký čas + pozícia)
-        // SkyDemon môže mať nulové časové kroky alebo duplicitné záznamy
-        val normalizedRaw = rawPoints
+        val sortedRaw = rawPoints
             .sortedBy { it.tMs }
-            .distinctBy { Triple(it.tMs, it.lat, it.lon) }
+            .distinctBy { it.tMs }
+
+        val normalizedRaw = ArrayList<Raw>(sortedRaw.size)
+        for (r in sortedRaw) {
+            val prev = normalizedRaw.lastOrNull()
+            if (prev == null) { normalizedRaw.add(r); continue }
+            val dtMs = r.tMs - prev.tMs
+            // Preskočí sub-sekundové artefakty (SkyDemon GPS aktualizuje ~1 Hz)
+            if (dtMs < 500L) continue
+            // Preskočí body kde sa GPS pozícia nezmenila
+            if (r.lat == prev.lat && r.lon == prev.lon) continue
+            normalizedRaw.add(r)
+        }
 
         Log.i(TAG, "Raw gx:Track points: ${normalizedRaw.size} / $count")
         if (normalizedRaw.size < 2) return emptyList()

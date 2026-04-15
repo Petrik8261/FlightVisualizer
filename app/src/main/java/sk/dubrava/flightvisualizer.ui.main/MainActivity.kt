@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var smoothBearing: Double? = null
 
     private var lastCrsDeg:    Double? = null
+    private var smoothCrsDeg: Double? = null
     private var lastPosForCrs: LatLng? = null
 
     private var flightMarker: Marker? = null
@@ -167,6 +168,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (resetCamera) {
             smoothZoom    = null
             smoothBearing = null
+            smoothCrsDeg = null
         }
     }
 
@@ -420,12 +422,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         // CRS z interpolovanej pozície
         val prevPos = lastPosForCrs
-        val crs: Double? = if (prevPos != null) {
+        val rawCrs: Double? = if (prevPos != null) {
             val d = GeoMath.distanceMeters(prevPos, pos)
-            if (d >= 1.0) headingDegrees(prevPos, pos) else lastCrsDeg
+            if (d >= 0.5) headingDegrees(prevPos, pos) else lastCrsDeg
         } else lastCrsDeg
-        if (crs != null) lastCrsDeg = crs
+        if (rawCrs != null) lastCrsDeg = rawCrs
         lastPosForCrs = pos
+
+        val crs: Double? = if (rawCrs != null) {
+            if (isGpsOnlySource(a.source)) {
+                smoothCrsDeg = if (smoothCrsDeg == null) rawCrs
+                else emaAngle(smoothCrsDeg!!, rawCrs, 0.18)
+                smoothCrsDeg
+            } else rawCrs
+        } else smoothCrsDeg
 
         // Pitch / Roll
         val pitchA = a.pitchDeg ?: 0.0
@@ -490,6 +500,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         // Pitch/roll: null ak záznam ich neobsahuje → HUD prepne do LIMITED
         val pitchOut = if (a.pitchDeg != null) pitchForHud else null
         val rollOut  = if (a.rollDeg  != null) roll        else null
+
 
         attitudeView.setFlightData(
             headingDeg          = hdgForDisplay,
@@ -615,9 +626,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         lastVsMpsStable = vsMpsForHud
 
+        val crsForSeek: Double? = when {
+            idx < lastFrameIndex -> headingDegrees(routeLatLng[idx], routeLatLng[idx + 1])
+            idx > 0              -> headingDegrees(routeLatLng[idx - 1], routeLatLng[idx])
+            else                 -> null
+        }
+        lastCrsDeg = crsForSeek
+
         attitudeView.setFlightData(
             headingDeg          = norm360(yaw),
-            courseDeg           = null,
+            courseDeg           = crsForSeek,
             pitchDeg            = pitchHud,
             rollDeg             = fp.rollDeg,
             altitudeFt          = fp.altitudeM * M_TO_FT,
