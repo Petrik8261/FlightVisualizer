@@ -9,16 +9,18 @@ Android aplikácia na vizualizáciu letových záznamov. Umožňuje načítať t
 - Podpora viacerých formátov letových záznamov
 - Dva režimy zobrazenia dát: RAW a ASSISTED
 
-## Podporované formáty
+## ## Podporované formáty
 
 | Formát | Zdroj |
 |--------|-------|
-| KML | WIW GPS logger / Google Earth |
-| CSV | Microsoft Flight Simulator (SkyDolly) |
-| CSV | Garmin avionics (G1000 / G3X Touch) |
+| KML (Camera) | Mobilný GPS záznamník — WIW GPS Logger / Google Earth |
+| KML (gx:Track) | SkyDemon |
+| GPX | EFB aplikácie — ForeFlight, Garmin Pilot, Air Navigation Pro, SkyDemon |
+| CSV | Microsoft Flight Simulator — SkyDolly |
+| CSV | Garmin avionics — G1000 / G3X Touch, Dynon SkyView |
 | CSV | DJI FlightRecord |
 | CSV | AirData UAV |
-| TXT | Arduino GPS + IMU logger |
+| TXT | Experimentálny Arduino GPS + IMU logger |
 
 ## Požiadavky
 
